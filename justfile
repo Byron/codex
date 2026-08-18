@@ -7,6 +7,7 @@ set windows-shell := ["python", "-c", 'import os, runpy; runpy.run_path(os.envir
 
 rust_min_stack := "8388608" # 8 MiB
 python := if os_family() == "windows" { "python" } else { "python3" }
+codex_dev_package_dir := home_directory() / ".cargo/bin/codex-dev"
 
 # Display help
 help:
@@ -168,6 +169,11 @@ bazel-argument-comment-lint:
 
 build-for-release:
     bazel build //codex-rs/cli:release_binaries
+
+# Build a self-contained local CLI package directory.
+[no-cd]
+build-cli-package package_dir=codex_dev_package_dir:
+    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --package-dir "{{ package_dir }}" --force
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
