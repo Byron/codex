@@ -517,6 +517,7 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 
 #[test_case::test_case(None, Some("ultrafast"); "standard to ultrafast")]
 #[test_case::test_case(Some("ultrafast"), None; "ultrafast to standard")]
+#[test_case::test_case(Some("priority"), None; "priority to standard")]
 #[test_case::test_case(Some("priority"), Some("ultrafast"); "priority to ultrafast")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_v2_first_turn_sends_full_create_when_tier_changes_after_startup_prewarm(
@@ -598,7 +599,10 @@ async fn websocket_v2_first_turn_sends_full_create_when_tier_changes_after_start
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
     assert_eq!(first_turn["model"].as_str(), Some(model));
-    assert_eq!(first_turn["service_tier"].as_str(), turn_tier);
+    assert_eq!(
+        first_turn["service_tier"].as_str(),
+        turn_tier.or(Some("default"))
+    );
     assert_ne!(first_turn["generate"].as_bool(), Some(false));
     assert_eq!(
         first_turn["client_metadata"]["x-codex-turn-state"].as_str(),
@@ -680,7 +684,7 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     );
 
     assert_eq!(second_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(second_turn.get("service_tier"), None);
+    assert_eq!(second_turn["service_tier"].as_str(), Some("default"));
     assert_eq!(second_turn.get("previous_response_id"), None);
     assert!(
         second_turn
