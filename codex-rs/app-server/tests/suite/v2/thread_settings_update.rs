@@ -532,11 +532,10 @@ async fn thread_settings_update_null_service_tier_uses_default() -> Result<()> {
     assert!(
         request_bodies.iter().any(|body| {
             body.get("model").and_then(Value::as_str) == Some(model_id.as_str())
-                && body
-                    .as_object()
-                    .is_some_and(|object| !object.contains_key("service_tier"))
+                && body.get("service_tier").and_then(Value::as_str)
+                    == Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE)
         }),
-        "future turn did not clear service tier: {request_bodies:#?}"
+        "future turn did not request standard processing: {request_bodies:#?}"
     );
     Ok(())
 }

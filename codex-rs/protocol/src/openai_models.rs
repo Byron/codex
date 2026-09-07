@@ -874,8 +874,8 @@ impl ModelInfo {
 
     pub fn service_tier_for_request(&self, service_tier: Option<String>) -> Option<String> {
         service_tier.filter(|service_tier| {
-            service_tier != SERVICE_TIER_DEFAULT_REQUEST_VALUE
-                && self.supports_service_tier(service_tier)
+            service_tier == SERVICE_TIER_DEFAULT_REQUEST_VALUE
+                || self.supports_service_tier(service_tier)
         })
     }
 }
@@ -1822,7 +1822,7 @@ mod tests {
     }
 
     #[test]
-    fn service_tier_for_request_omits_explicit_default_tier() {
+    fn service_tier_for_request_preserves_explicit_default_tier() {
         let model = ModelInfo {
             default_service_tier: Some(ServiceTier::Fast.request_value().to_string()),
             service_tiers: vec![ModelServiceTier {
@@ -1835,7 +1835,7 @@ mod tests {
 
         assert_eq!(
             model.service_tier_for_request(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
-            None
+            Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
         );
     }
 

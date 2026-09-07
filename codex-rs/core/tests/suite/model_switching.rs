@@ -14,7 +14,6 @@ use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 use codex_protocol::mcp::ClientMcpExtensions;
@@ -626,7 +625,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let second_body = requests[1].body_json();
 
     assert_eq!(first_body["service_tier"].as_str(), Some("priority"));
-    assert_eq!(second_body.get("service_tier"), None);
+    assert_eq!(second_body["service_tier"].as_str(), Some("default"));
 
     Ok(())
 }
@@ -742,8 +741,17 @@ async fn unsupported_configured_service_tier_warns_at_session_start() -> Result<
     Ok(())
 }
 
+#[test_case(None, None, None; "unset")]
+#[test_case(Some("default"), None, Some("default"); "configured default")]
+#[test_case(Some("priority"), None, Some("priority"); "configured priority")]
+#[test_case(None, Some(Some("default")), Some("default"); "explicit default override")]
+#[test_case(None, Some(None), Some("default"); "null override")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_service_tier_override_is_omitted_from_http_turn() -> Result<()> {
+async fn service_tier_is_preserved_on_http_turn_with_catalog_default(
+    configured_service_tier: Option<&str>,
+    service_tier_override: Option<Option<&str>>,
+    expected_service_tier: Option<&str>,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -762,60 +770,30 @@ async fn default_service_tier_override_is_omitted_from_http_turn() -> Result<()>
     model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
     let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
 
+    let configured_service_tier = configured_service_tier.map(str::to_string);
     let mut builder = test_codex()
         .with_model(model_slug)
         .with_config(move |config| {
+            config.service_tier = configured_service_tier;
             config.model_catalog = Some(ModelsResponse {
                 models: vec![model],
             });
         });
-    let test = builder.build(&server).await?;
+    let test = builder.build_with_auto_env(&server).await?;
 
-    test.submit_turn_with_service_tier("default turn", Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE))
-        .await?;
+    if let Some(service_tier) = service_tier_override {
+        test.submit_turn_with_service_tier("test tier", service_tier)
+            .await?;
+    } else {
+        test.submit_text_turn("test tier").await?;
+    }
 
     let request = resp_mock.single_request();
     let body = request.body_json();
-    assert_eq!(body.get("service_tier"), None);
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn null_service_tier_override_is_omitted_from_http_turn_with_catalog_default() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let model_slug = "test-null-default-tier-model";
-    let mut model = test_model_info(
-        model_slug,
-        model_slug,
-        "has catalog default service tier",
-        default_input_modalities(),
+    assert_eq!(
+        body.get("service_tier").and_then(serde_json::Value::as_str),
+        expected_service_tier
     );
-    model.service_tiers = vec![ModelServiceTier {
-        id: ServiceTier::Fast.request_value().to_string(),
-        name: "fast".to_string(),
-        description: "Fast processing.".to_string(),
-    }];
-    model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
-    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
-
-    let mut builder = test_codex()
-        .with_model(model_slug)
-        .with_config(move |config| {
-            config.model_catalog = Some(ModelsResponse {
-                models: vec![model],
-            });
-        });
-    let test = builder.build(&server).await?;
-
-    test.submit_turn_with_service_tier("standard turn", /*service_tier*/ None)
-        .await?;
-
-    let request = resp_mock.single_request();
-    let body = request.body_json();
-    assert_eq!(body.get("service_tier"), None);
 
     Ok(())
 }

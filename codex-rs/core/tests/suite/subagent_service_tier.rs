@@ -157,8 +157,8 @@ async fn root_service_tier_change_updates_existing_subagent(
 ) -> Result<()> {
     let server = start_mock_server().await;
     let initial_service_tier_owned = initial_service_tier.map(str::to_string);
-    let updated_request_service_tier = updated_service_tier
-        .filter(|service_tier| *service_tier != SERVICE_TIER_DEFAULT_REQUEST_VALUE);
+    let updated_request_service_tier =
+        Some(updated_service_tier.unwrap_or(SERVICE_TIER_DEFAULT_REQUEST_VALUE));
     let mut builder = test_codex()
         .with_model("gpt-5.6-sol")
         .with_config(move |config| {
@@ -389,7 +389,7 @@ async fn evicted_role_subagent_uses_root_service_tier_after_reload() -> Result<(
         }]))
         .await?;
     wait_for_turn_complete(&reloaded_thread).await;
-    assert_request_service_tier(&reloaded_request, /*expected*/ None);
+    assert_request_service_tier(&reloaded_request, Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE));
     reloaded_thread.shutdown_and_wait().await?;
     test.codex.shutdown_and_wait().await?;
 

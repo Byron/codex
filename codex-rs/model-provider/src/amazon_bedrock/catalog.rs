@@ -315,7 +315,7 @@ mod tests {
             assert_eq!(
                 model
                     .service_tier_for_request(Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
-                None
+                Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())
             );
         }
     }

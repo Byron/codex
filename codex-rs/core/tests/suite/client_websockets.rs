@@ -70,6 +70,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
+use test_case::test_case;
 use tracing::Instrument;
 use tracing_test::traced_test;
 
@@ -1215,8 +1216,12 @@ async fn responses_websocket_request_prewarm_is_reused_even_with_header_changes(
     server.shutdown().await;
 }
 
+#[test_case("priority"; "priority")]
+#[test_case("default"; "default")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
+async fn responses_websocket_prewarm_includes_model_and_service_tier_routing_hint(
+    service_tier: &str,
+) {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![vec![
@@ -1227,9 +1232,8 @@ async fn responses_websocket_prewarm_includes_model_and_tier_routing_hint() {
 
     let harness = websocket_harness_for_codex_backend(&server).await;
     let mut model_info = harness.model_info.clone();
-    let service_tier = ServiceTier::Fast.request_value();
     model_info.service_tiers.push(ModelServiceTier {
-        id: service_tier.to_string(),
+        id: ServiceTier::Fast.request_value().to_string(),
         name: "Fast".to_string(),
         description: "Priority processing".to_string(),
     });

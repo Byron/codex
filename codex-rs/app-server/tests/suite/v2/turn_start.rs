@@ -1136,7 +1136,7 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
     );
 
     for (service_tier_for_turn, expected_service_tier) in [
-        (Some("default".to_string()), None),
+        (Some("default".to_string()), Some(json!("default"))),
         (None, Some(json!(service_tier_id))),
     ] {
         let response_mock = responses::mount_sse_once(&server, body.clone()).await;
