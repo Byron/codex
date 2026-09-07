@@ -1226,6 +1226,7 @@ async fn responses_websocket_sends_responses_lite_metadata_per_request() {
 }
 
 #[test_case::test_case(MODEL, Some("ultrafast"), Some("ultrafast"); "matching hint")]
+#[test_case::test_case(MODEL, Some("default"), Some("default"); "explicit default hint")]
 #[test_case::test_case(MODEL, None, Some("ultrafast"); "tier selected after handshake")]
 #[test_case::test_case("gpt-5.2", Some("ultrafast"), None; "model and tier changed after handshake")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
