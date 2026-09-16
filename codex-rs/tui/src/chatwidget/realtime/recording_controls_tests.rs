@@ -538,16 +538,18 @@ async fn voice_terminal_title_tracks_capture_activity_and_user_settings() {
     };
     check(&mut chat, "● project");
     chat.bottom_pane.set_task_running(/*running*/ true);
-    chat.local_settings.tui.animations = true;
-    chat.refresh_terminal_title();
-    assert!(chat.last_terminal_title.as_deref().is_some_and(|title| {
-        title.starts_with("● ") && title.ends_with(" project") && title != "● project"
-    }));
-    chat.local_settings.tui.animations = false;
-    check(&mut chat, "● project");
+    for animations in [true, false] {
+        chat.local_settings.tui.animations = animations;
+        chat.refresh_terminal_title();
+        assert!(chat.last_terminal_title.as_deref().is_some_and(|title| {
+            title.starts_with("● ") && title.ends_with(" project") && title != "● project"
+        }));
+    }
     chat.local_settings.tui.terminal_title = Some(vec!["project-name".to_string()]);
     check(&mut chat, "project");
+    chat.bottom_pane.set_task_running(/*running*/ false);
     chat.local_settings.tui.terminal_title = None;
+    check(&mut chat, "● project");
     use RealtimeConversationPhase as Phase;
     for phase in [Phase::Starting, Phase::Stopping, Phase::Inactive] {
         chat.realtime_conversation.phase = phase;

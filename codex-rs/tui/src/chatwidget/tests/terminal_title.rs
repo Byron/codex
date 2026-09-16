@@ -65,6 +65,7 @@ async fn goal_clock_refresh_redraws_only_when_elapsed_label_changes() {
 #[tokio::test]
 async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.local_settings.tui.animations = false;
     let (frame_requester, mut draw_rx) = FrameRequester::test_channel();
     chat.frame_requester = frame_requester;
     chat.bottom_pane.set_task_running(/*running*/ true);
@@ -126,22 +127,24 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     assert!(!title.contains("Action Required"));
     assert!(chat.should_animate_terminal_title_spinner());
 
-    for (animations, title_items) in [(false, None), (true, Some(Vec::new()))] {
-        chat.local_settings.tui.animations = true;
-        chat.local_settings.tui.terminal_title = None;
-        chat.refresh_terminal_title();
-        assert!(chat.terminal_title_next_refresh.is_some());
+    chat.bottom_pane.set_task_running(/*running*/ false);
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title.as_deref(), Some("project"));
+    assert!(chat.terminal_title_next_refresh.is_none());
 
-        chat.local_settings.tui.animations = animations;
-        chat.local_settings.tui.terminal_title = title_items;
-        chat.refresh_terminal_title();
-        assert!(chat.terminal_title_next_refresh.is_none());
-    }
+    chat.bottom_pane.set_task_running(/*running*/ true);
+    chat.refresh_terminal_title();
+    assert!(chat.terminal_title_next_refresh.is_some());
+    chat.local_settings.tui.terminal_title = Some(Vec::new());
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, None);
+    assert!(chat.terminal_title_next_refresh.is_none());
 }
 
 #[tokio::test]
 async fn terminal_title_action_required_respects_spinner_setting() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.local_settings.tui.animations = false;
     chat.local_settings.tui.terminal_title = Some(vec!["project".to_string()]);
     chat.bottom_pane.set_task_running(/*running*/ true);
     chat.refresh_terminal_title();
@@ -167,6 +170,7 @@ async fn terminal_title_action_required_respects_spinner_setting() {
 
     assert_eq!(chat.last_terminal_title, Some("project".to_string()));
     assert!(!chat.should_animate_terminal_title_action_required());
+    assert!(chat.terminal_title_next_refresh.is_none());
 }
 
 #[tokio::test]
@@ -204,15 +208,20 @@ async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
 }
 
 #[tokio::test]
-async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_disabled() {
+async fn terminal_title_activity_indicators_animate_with_reduced_motion() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.local_settings.tui.animations = false;
     chat.bottom_pane.set_task_running(/*running*/ true);
-    chat.terminal_title_animation_origin = Instant::now() - std::time::Duration::from_millis(1500);
+    let now = Instant::now();
+    chat.terminal_title_animation_origin = now;
     chat.refresh_terminal_title();
 
-    assert_eq!(chat.last_terminal_title, Some("project".to_string()));
-    assert!(!chat.should_animate_terminal_title_spinner());
+    let frames = [now, now + Duration::from_millis(/*millis*/ 100)].map(|now| {
+        chat.terminal_title_spinner_text_at(now)
+            .expect("running spinner")
+    });
+    assert!(chat.should_animate_terminal_title_spinner());
+    assert!(chat.terminal_title_next_refresh.is_some());
 
     let request = ExecApprovalRequestEvent {
         kind: Default::default(),
@@ -231,13 +240,23 @@ async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_d
     };
     handle_exec_approval_request(&mut chat, "sub-no-animations", request);
 
+    chat.terminal_title_animation_origin =
+        Instant::now() - Duration::from_millis(/*millis*/ 1500);
     chat.pre_draw_tick();
 
-    assert_eq!(
-        chat.last_terminal_title,
-        Some("[ ! ] Action Required | project".to_string())
+    insta::assert_snapshot!(
+        format!(
+            "running: {}\nblocked: {}",
+            frames.join(" → "),
+            chat.last_terminal_title.as_deref().unwrap()
+        ),
+        @r"
+        running: ⠋ → ⠙
+        blocked: [ . ] Action Required | project
+        "
     );
-    assert!(!chat.should_animate_terminal_title_action_required());
+    assert!(chat.should_animate_terminal_title_action_required());
+    assert!(chat.terminal_title_next_refresh.is_some());
 }
 
 #[tokio::test]
@@ -245,6 +264,9 @@ async fn thread_title_progress_renders_names_and_fallbacks_on_both_surfaces() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::from_string("550e8400-e29b-41d4-a716-446655440000").unwrap());
     chat.local_settings.tui.animations = false;
+    // Keep wall-clock refreshes on the first frame too.
+    let now = Instant::now() + Duration::from_secs(/*secs*/ 60);
+    chat.terminal_title_animation_origin = now;
     let mut rendered = Vec::new();
     for (name, pending) in [
         (None, false),
@@ -271,7 +293,7 @@ async fn thread_title_progress_renders_names_and_fallbacks_on_both_surfaces() {
         ]
         .into_iter()
         .map(|item| {
-            chat.terminal_title_value_for_item(item, Instant::now())
+            chat.terminal_title_value_for_item(item, now)
                 .unwrap_or_default()
         })
         .collect::<Vec<_>>()
@@ -291,7 +313,7 @@ async fn thread_title_progress_renders_names_and_fallbacks_on_both_surfaces() {
         None
     );
     assert_eq!(
-        chat.terminal_title_value_for_item(TerminalTitleItem::ThreadName, Instant::now()),
+        chat.terminal_title_value_for_item(TerminalTitleItem::ThreadName, now),
         None
     );
 }
@@ -333,10 +355,33 @@ async fn thread_title_progress_animates_when_main_turn_is_idle() {
     assert!(draw_rx.try_recv().is_err());
 
     chat.local_settings.tui.animations = false;
+    chat.local_settings.tui.status_line = Some(vec!["thread-name".to_string()]);
+    chat.refresh_status_surfaces();
+    assert!(chat.terminal_title_next_refresh.is_some());
+    while draw_rx.try_recv().is_ok() {}
+    chat.refresh_thread_title_progress_for_time_tick();
+    assert_eq!(
+        draw_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    );
+    let frames = [now, now + Duration::from_millis(/*millis*/ 100)].map(|now| {
+        let title = chat
+            .terminal_title_value_for_item(TerminalTitleItem::ThreadName, now)
+            .unwrap();
+        let footer = chat
+            .status_line_value_for_item(StatusLineItem::ThreadName)
+            .unwrap();
+        format!("tab: {title}, footer: {footer}")
+    });
+    insta::assert_snapshot!(frames.join("\n"), @r"
+    tab: ⠋, footer: ⠋
+    tab: ⠙, footer: ⠋
+    ");
+
+    chat.local_settings.tui.terminal_title = Some(Vec::new());
     chat.refresh_status_surfaces();
     assert!(chat.terminal_title_next_refresh.is_none());
-    assert_eq!(chat.last_terminal_title, Some("⠋".to_string()));
-    chat.local_settings.tui.animations = true;
+    chat.local_settings.tui.terminal_title = Some(vec!["thread-name".to_string()]);
     chat.set_thread_title_generation_pending(/*pending*/ false);
     assert_eq!(chat.last_terminal_title, None);
     assert!(chat.terminal_title_next_refresh.is_none());
@@ -353,10 +398,9 @@ async fn thread_title_progress_preserves_suffix_after_truncation_and_in_default_
         normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 100))
     );
     chat.thread_name = Some("Long title ".repeat(/*n*/ 12));
+    let now = chat.terminal_title_animation_origin;
     for item in [TerminalTitleItem::ThreadName, TerminalTitleItem::Thread] {
-        let title = chat
-            .terminal_title_value_for_item(item, Instant::now())
-            .unwrap();
+        let title = chat.terminal_title_value_for_item(item, now).unwrap();
         assert!(title.ends_with("... ⠋"), "{title}");
         assert_eq!(title.chars().count(), 50);
     }

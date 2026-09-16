@@ -2,6 +2,8 @@
 //!
 //! Keeping this logic in a focused submodule makes the additive title/status
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
+//! Terminal-title activity stays animated even when TUI motion is reduced so
+//! background tabs still signal progress and required input.
 
 use super::*;
 use crate::bottom_pane::status_line_from_segments;
@@ -10,6 +12,7 @@ use crate::chatwidget::limit_label_for_window;
 use crate::chatwidget::rate_limits::get_limits_duration;
 use crate::legacy_core::config::Config;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
+use crate::motion::MotionMode;
 use crate::status::format_credit_micros;
 use crate::status::format_estimated_usd_micros;
 use crate::status::format_tokens_compact;
@@ -368,10 +371,6 @@ impl ChatWidget {
     }
 
     fn action_required_terminal_title_prefix_at(&self, now: Instant) -> &'static str {
-        if !self.local_settings.tui.animations {
-            return TERMINAL_TITLE_ACTION_REQUIRED_PREFIX;
-        }
-
         let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
         let phase = (elapsed.as_millis() / TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL.as_millis()) % 2;
         if phase == 0 {
@@ -395,29 +394,28 @@ impl ChatWidget {
         &self,
         selections: &StatusSurfaceSelections,
     ) -> Option<Duration> {
-        if self.local_settings.tui.animations
-            && self.status_state.thread_title_generation_pending
-            && (selections.status_line_items.iter().any(|item| {
-                matches!(
-                    item,
-                    StatusLineItem::ThreadName
-                        | StatusLineItem::ThreadTitle
-                        | StatusLineItem::SessionId
-                )
-            }) || selections.terminal_title_items.iter().any(|item| {
-                matches!(
-                    item,
-                    TerminalTitleItem::ThreadName
-                        | TerminalTitleItem::Thread
-                        | TerminalTitleItem::SessionId
-                )
-            }))
+        if self.status_state.thread_title_generation_pending
+            && ((self.local_settings.tui.animations
+                && selections.status_line_items.iter().any(|item| {
+                    matches!(
+                        item,
+                        StatusLineItem::ThreadName
+                            | StatusLineItem::ThreadTitle
+                            | StatusLineItem::SessionId
+                    )
+                }))
+                || selections.terminal_title_items.iter().any(|item| {
+                    matches!(
+                        item,
+                        TerminalTitleItem::ThreadName
+                            | TerminalTitleItem::Thread
+                            | TerminalTitleItem::SessionId
+                    )
+                }))
         {
             return Some(TERMINAL_TITLE_SPINNER_INTERVAL);
         }
-        if self.local_settings.tui.animations
-            && self.terminal_title_shows_action_required_with_selections(selections)
-        {
+        if self.terminal_title_shows_action_required_with_selections(selections) {
             return Some(TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL);
         }
 
@@ -898,7 +896,7 @@ impl ChatWidget {
                 let value = self
                     .status_line_value(item)
                     .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 48));
-                self.with_thread_title_progress(value, now)
+                self.with_thread_title_progress(value, now, MotionMode::Animated)
             }
             TerminalTitleItem::GitBranch => self.status_line_branch.as_ref().map(|branch| {
                 Self::truncate_terminal_title_part(branch.clone(), /*max_chars*/ 32)
@@ -937,7 +935,7 @@ impl ChatWidget {
                 let value = self
                     .status_line_value(StatusLineItem::SessionId)
                     .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32));
-                self.with_thread_title_progress(value, now)
+                self.with_thread_title_progress(value, now, MotionMode::Animated)
             }
             TerminalTitleItem::FastMode => self
                 .status_line_value_for_item(StatusLineItem::FastMode)
@@ -1007,9 +1005,9 @@ impl ChatWidget {
     }
 
     pub(super) fn terminal_title_spinner_text_at(&self, now: Instant) -> Option<String> {
-        let spinner = (self.local_settings.tui.animations
-            && self.terminal_title_has_active_progress())
-        .then(|| self.terminal_title_spinner_frame_at(now));
+        let spinner = self
+            .terminal_title_has_active_progress()
+            .then(|| self.terminal_title_spinner_frame_at(now));
         if self.realtime_microphone_is_listening() {
             return Some(match spinner {
                 Some(frame) => format!("● {frame}"),
@@ -1048,23 +1046,20 @@ impl ChatWidget {
     }
 
     pub(super) fn should_animate_terminal_title_spinner(&self) -> bool {
-        self.local_settings.tui.animations
-            && self.terminal_title_uses_activity()
-            && self.terminal_title_has_active_progress()
+        self.terminal_title_uses_activity() && self.terminal_title_has_active_progress()
     }
 
     pub(super) fn should_animate_terminal_title_action_required(&self) -> bool {
-        self.local_settings.tui.animations && self.terminal_title_shows_action_required()
+        self.terminal_title_shows_action_required()
     }
 
     fn should_animate_terminal_title_spinner_with_selections(
         &self,
         selections: &StatusSurfaceSelections,
     ) -> bool {
-        self.local_settings.tui.animations
-            && selections
-                .terminal_title_items
-                .contains(&TerminalTitleItem::Spinner)
+        selections
+            .terminal_title_items
+            .contains(&TerminalTitleItem::Spinner)
             && self.terminal_title_has_active_progress()
     }
 

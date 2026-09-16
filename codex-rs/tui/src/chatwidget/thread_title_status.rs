@@ -6,6 +6,7 @@
 use super::ChatWidget;
 use super::status_surfaces::TERMINAL_TITLE_SPINNER_FRAMES;
 use crate::bottom_pane::StatusLineItem;
+use crate::motion::MotionMode;
 use std::time::Instant;
 
 impl ChatWidget {
@@ -23,7 +24,11 @@ impl ChatWidget {
             item,
             StatusLineItem::ThreadName | StatusLineItem::ThreadTitle | StatusLineItem::SessionId
         ) {
-            self.with_thread_title_progress(value, Instant::now())
+            self.with_thread_title_progress(
+                value,
+                Instant::now(),
+                MotionMode::from_animations_enabled(self.local_settings.tui.animations),
+            )
         } else {
             value
         }
@@ -33,14 +38,14 @@ impl ChatWidget {
         &self,
         value: Option<String>,
         now: Instant,
+        motion_mode: MotionMode,
     ) -> Option<String> {
         if !self.status_state.thread_title_generation_pending {
             return value;
         }
-        let spinner = if self.local_settings.tui.animations {
-            self.terminal_title_spinner_frame_at(now)
-        } else {
-            TERMINAL_TITLE_SPINNER_FRAMES[0]
+        let spinner = match motion_mode {
+            MotionMode::Animated => self.terminal_title_spinner_frame_at(now),
+            MotionMode::Reduced => TERMINAL_TITLE_SPINNER_FRAMES[0],
         };
         Some(match value {
             Some(value) => format!("{value} {spinner}"),
