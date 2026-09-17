@@ -1,18 +1,34 @@
 use super::*;
+use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;
+use crate::motion::MotionMode;
+use crate::render::renderable::Renderable;
+use crate::status_indicator_widget::StatusIndicatorWidget;
+use crate::status_indicator_widget::StatusTimer;
+use crate::tui::FrameRequester;
 use codex_config::LoaderOverrides;
 use codex_config::types::SessionPickerViewMode;
 use pretty_assertions::assert_eq;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use tokio::sync::mpsc::unbounded_channel;
 
 #[tokio::test]
-async fn system_motion_suppresses_animations_without_changing_saved_preferences()
--> anyhow::Result<()> {
-    use crate::motion::MotionMode;
-
-    for configured in [true, false] {
-        let home = tempfile::tempdir()?;
-        let config_text = format!("[tui]\nanimations = {configured}\nwhimsy = true\n");
+async fn explicit_animations_override_accessibility_defaults() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let mut snapshots = Vec::new();
+    for (configured, cli_override, expected_animated, expected_reduced) in [
+        (None, None, true, false),
+        (Some(true), None, true, true),
+        (Some(false), None, false, false),
+        (Some(false), Some(true), true, true),
+        (Some(true), Some(false), false, false),
+    ] {
+        let mut config_text = "[tui]\nwhimsy = true\n".to_string();
+        if let Some(configured) = configured {
+            config_text.push_str(&format!("animations = {configured}\n"));
+        }
         std::fs::write(home.path().join("config.toml"), &config_text)?;
         let config = ConfigBuilder::default()
             .codex_home(home.path().to_path_buf())
@@ -20,6 +36,12 @@ async fn system_motion_suppresses_animations_without_changing_saved_preferences(
                 ignore_project_config: true,
                 ..LoaderOverrides::without_managed_config_for_tests()
             })
+            .cli_overrides(
+                cli_override
+                    .map(|enabled| ("tui.animations".into(), toml::Value::Boolean(enabled)))
+                    .into_iter()
+                    .collect(),
+            )
             .build()
             .await?;
         let animated = LocalSettings::with_accessibility_preferences(
@@ -27,21 +49,51 @@ async fn system_motion_suppresses_animations_without_changing_saved_preferences(
             MotionMode::Animated,
             MotionMode::Animated,
         );
-        let reduced = LocalSettings::with_accessibility_preferences(
-            &config,
-            MotionMode::Reduced,
-            MotionMode::Animated,
-        );
-        let mut expected = animated.clone();
-        expected.tui.animations = false;
-        assert_eq!(reduced, expected);
-        assert_eq!(animated.tui.animations, configured);
-        assert_eq!(config.animations, configured);
+        for (system_motion, screen_reader_default, animations) in [
+            (
+                MotionMode::Animated,
+                MotionMode::Animated,
+                expected_animated,
+            ),
+            (MotionMode::Reduced, MotionMode::Animated, expected_reduced),
+            (MotionMode::Animated, MotionMode::Reduced, expected_reduced),
+            (MotionMode::Reduced, MotionMode::Reduced, expected_reduced),
+        ] {
+            let local = LocalSettings::with_accessibility_preferences(
+                &config,
+                system_motion,
+                screen_reader_default,
+            );
+            let mut expected = animated.clone();
+            expected.tui.animations = animations;
+            assert_eq!(local, expected);
+
+            let (tx, _rx) = unbounded_channel();
+            let row = StatusIndicatorWidget::new(
+                AppEventSender::new(tx),
+                FrameRequester::test_dummy(),
+                local.tui.animations,
+            );
+            let mut timer = StatusTimer::default();
+            timer.pause_at(std::time::Instant::now());
+            let mut terminal =
+                Terminal::new(TestBackend::new(/*width*/ 40, /*height*/ 1))?;
+            terminal.draw(|frame| {
+                row.with_timer(&timer)
+                    .render(frame.area(), frame.buffer_mut())
+            })?;
+            snapshots.push(format!(
+                "config {configured:?}, CLI {cli_override:?}, system {system_motion:?}, screen reader {screen_reader_default:?}:\n{}",
+                terminal.backend(),
+            ));
+        }
+        assert_eq!(config.animations, expected_animated);
         assert_eq!(
             std::fs::read_to_string(home.path().join("config.toml"))?,
             config_text
         );
     }
+    insta::assert_snapshot!("animation_preference_status_rows", snapshots.join("\n"));
     Ok(())
 }
 
@@ -151,8 +203,6 @@ async fn local_writes_preserve_selected_user_file_and_home_destinations() -> any
 
 #[tokio::test]
 async fn screen_reader_default_yields_to_preferences_on_reload() -> anyhow::Result<()> {
-    use crate::motion::MotionMode;
-
     let home = tempfile::tempdir()?;
     for (config_text, expected) in [
         ("", false),

@@ -3,7 +3,8 @@
 //! The resolved core config is a temporary input at local load/reload boundaries. Server thread
 //! responses must never refresh these values; live preference changes belong here. The remaining
 //! Config-based lifecycle adapters also use this conversion until their interfaces are migrated.
-//! Effective animations also respect the TUI host's launch-time accessibility preference.
+//! Unspecified animations follow the TUI host's launch-time accessibility preferences;
+//! explicit `tui.animations` values take precedence.
 
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::TerminalResizeReflowConfig;
@@ -38,7 +39,9 @@ impl LocalSettings {
         system_motion: crate::motion::MotionMode,
         screen_reader_default: crate::motion::MotionMode,
     ) -> Self {
-        let animations = if screen_reader_default == crate::motion::MotionMode::Reduced {
+        let animations = if system_motion == crate::motion::MotionMode::Reduced
+            || screen_reader_default == crate::motion::MotionMode::Reduced
+        {
             // Consult the current layers so preferences edited after startup still win.
             config
                 .config_layer_stack
@@ -53,7 +56,7 @@ impl LocalSettings {
         Self {
             tui: Tui {
                 notification_settings: config.tui_notifications.clone(),
-                animations: animations && system_motion == crate::motion::MotionMode::Animated,
+                animations,
                 screen_reader_detection_done: None,
                 whimsy: config.tui_whimsy,
                 show_tooltips: config.show_tooltips,
