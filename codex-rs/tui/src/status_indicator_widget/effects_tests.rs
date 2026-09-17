@@ -1,4 +1,4 @@
-//! Independent status effects and master-switch precedence.
+//! Independent status effects and reduced-motion activity feedback.
 
 use super::*;
 use crate::app_event::AppEvent;
@@ -45,7 +45,7 @@ fn shimmer_and_progress_are_independent_and_obey_master_switch() {
                 .lines(/*width*/ 80);
                 let header = &lines[0];
                 // Omit the bullet's process-clock-driven styling from the snapshot.
-                let label_start = if animations && progress { 2 } else { 0 };
+                let label_start = if progress { 2 } else { 0 };
                 let label = &header.spans[label_start..];
                 snapshots.push(format!(
                     "animations={animations}, shimmer={shimmer}, progress={progress}\n{header}\n{label:?}"
