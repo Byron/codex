@@ -96,6 +96,24 @@ impl App {
             return Ok(AppRunControl::Continue);
         }
 
+        // Unwrap picker actions before dispatch: recursively polling this large future can
+        // overflow the event-loop stack even when the nested future is boxed.
+        let (event, sparkle_model) = if let AppEvent::AstraSelectedFromModelPicker {
+            thread_id,
+            model,
+            action,
+        } = event
+        {
+            // Check and apply in the same event so queued backend updates cannot turn a
+            // no-op picker confirmation into a sparkle.
+            let should_offer = self.chat_widget.current_model() != model
+                && self.chat_widget.sparkle_thread_for_picker_action(&model) == Some(thread_id);
+            let sparkle_model = should_offer.then(|| model.clone());
+            (action.into_app_event(model), sparkle_model)
+        } else {
+            (event, None)
+        };
+
         match event {
             AppEvent::OpenDaemonMenu => self.open_daemon_menu(),
             AppEvent::ConfirmDaemonUpdate(source) => self.confirm_daemon_update(source),
@@ -1805,21 +1823,8 @@ impl App {
                         .await;
                 }
             }
-            AppEvent::AstraSelectedFromModelPicker { thread_id, model, action } => {
-                // Check and apply in the same event so a queued backend update cannot turn a
-                // no-op picker confirmation into a sparkle.
-                let should_offer = self.chat_widget.current_model() != model
-                    && self.chat_widget.sparkle_thread_for_picker_action(&model) == Some(thread_id);
-                let control = Box::pin(self.handle_event(
-                    tui,
-                    app_server,
-                    action.into_app_event(model.clone()),
-                ))
-                .await?;
-                if should_offer {
-                    self.chat_widget.on_sparkle_model_selected_from_picker(&model);
-                }
-                return Ok(control);
+            AppEvent::AstraSelectedFromModelPicker { .. } => {
+                unreachable!("Astra picker actions are unwrapped before dispatch")
             }
             AppEvent::RealtimeWebrtcOfferCreated {
                 thread_id,
@@ -3050,6 +3055,10 @@ impl App {
                     self.insert_history_cell(tui, Box::new(cell));
                 }
             }
+        }
+        if let Some(model) = sparkle_model {
+            self.chat_widget
+                .on_sparkle_model_selected_from_picker(&model);
         }
         Ok(AppRunControl::Continue)
     }
