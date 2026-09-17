@@ -1,0 +1,32 @@
+---
+source: tui/src/chatwidget/rendering_tests.rs
+assertion_line: 230
+expression: "frames.join(\"\\n\\n\")"
+---
+full, 0ns
+
+• First line
+  Second line
+  Last line
+
+full, 600ms
+
+◦ First line
+  Second line
+  Last line
+
+continuation, 0ns
+
+• Last line
+
+continuation, 600ms
+
+◦ Last line
+
+wrapped, 0ns
+•
+yz
+
+wrapped, 600ms
+◦
+yz
