@@ -83,6 +83,65 @@ async fn choose_model(
     Ok(sparkle_offers)
 }
 
+#[test]
+fn ultra_picker_selection_fits_event_loop_stack_budget() -> Result<()> {
+    // The startup futures also occupy the CLI's 8 MiB stack while events are polled.
+    std::thread::Builder::new()
+        .name("tui-ultra-picker".to_string())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(/*val*/ 1)
+                .thread_stack_size(8 * 1024 * 1024)
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(async {
+                for animations in [false, true] {
+                    let mut app = Box::pin(make_test_app()).await;
+                    app.config.model = Some("gpt-6-astra".into());
+                    app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Max);
+                    app.local_settings.tui.animations = animations;
+                    app.local_settings.tui.whimsy = true;
+                    let mut server = start_config_write_test_app_server(&app).await?;
+                    let mut tui = crate::tui::test_support::make_test_tui()?;
+                    let thread = Box::pin(server.start_thread(&app.config)).await?;
+                    let thread_id = thread.session.thread_id;
+                    Box::pin(app.replace_chat_widget_with_app_server_thread(
+                        &mut tui,
+                        thread,
+                        ThreadAttachPresentation::Fresh,
+                        /*initial_user_message*/ None,
+                    ))
+                    .await?;
+
+                    Box::pin(app.handle_event(
+                        &mut tui,
+                        &mut server,
+                        AppEvent::AstraSelectedFromModelPicker {
+                            thread_id,
+                            model: "gpt-6-astra".into(),
+                            action: AstraModelPickerAction::ApplyAdvancedReasoning {
+                                effort: ReasoningEffortConfig::Ultra,
+                            },
+                        },
+                    ))
+                    .await?;
+                    assert_eq!(
+                        (
+                            app.chat_widget.current_model(),
+                            app.chat_widget.current_reasoning_effort(),
+                        ),
+                        ("gpt-6-astra", Some(ReasoningEffortConfig::Ultra)),
+                    );
+                    server.shutdown().await?;
+                }
+                Ok(())
+            }))
+        })?
+        .join()
+        .expect("Ultra picker test thread")
+}
+
 #[tokio::test]
 async fn only_a_confirmed_empty_new_task_shows_the_sparkle() -> Result<()> {
     for scenario in [
