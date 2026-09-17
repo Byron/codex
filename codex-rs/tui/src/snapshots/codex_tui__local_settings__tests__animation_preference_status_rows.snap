@@ -1,0 +1,63 @@
+---
+source: tui/src/local_settings_tests.rs
+expression: "snapshots.join(\"\\n\")"
+---
+config None, CLI None, system Animated, screen reader Animated:
+"• Working (0s • esc to interrupt)       "
+
+config None, CLI None, system Reduced, screen reader Animated:
+"Working (0s • esc to interrupt)         "
+
+config None, CLI None, system Animated, screen reader Reduced:
+"Working (0s • esc to interrupt)         "
+
+config None, CLI None, system Reduced, screen reader Reduced:
+"Working (0s • esc to interrupt)         "
+
+config Some(true), CLI None, system Animated, screen reader Animated:
+"• Working (0s • esc to interrupt)       "
+
+config Some(true), CLI None, system Reduced, screen reader Animated:
+"• Working (0s • esc to interrupt)       "
+
+config Some(true), CLI None, system Animated, screen reader Reduced:
+"• Working (0s • esc to interrupt)       "
+
+config Some(true), CLI None, system Reduced, screen reader Reduced:
+"• Working (0s • esc to interrupt)       "
+
+config Some(false), CLI None, system Animated, screen reader Animated:
+"Working (0s • esc to interrupt)         "
+
+config Some(false), CLI None, system Reduced, screen reader Animated:
+"Working (0s • esc to interrupt)         "
+
+config Some(false), CLI None, system Animated, screen reader Reduced:
+"Working (0s • esc to interrupt)         "
+
+config Some(false), CLI None, system Reduced, screen reader Reduced:
+"Working (0s • esc to interrupt)         "
+
+config Some(false), CLI Some(true), system Animated, screen reader Animated:
+"• Working (0s • esc to interrupt)       "
+
+config Some(false), CLI Some(true), system Reduced, screen reader Animated:
+"• Working (0s • esc to interrupt)       "
+
+config Some(false), CLI Some(true), system Animated, screen reader Reduced:
+"• Working (0s • esc to interrupt)       "
+
+config Some(false), CLI Some(true), system Reduced, screen reader Reduced:
+"• Working (0s • esc to interrupt)       "
+
+config Some(true), CLI Some(false), system Animated, screen reader Animated:
+"Working (0s • esc to interrupt)         "
+
+config Some(true), CLI Some(false), system Reduced, screen reader Animated:
+"Working (0s • esc to interrupt)         "
+
+config Some(true), CLI Some(false), system Animated, screen reader Reduced:
+"Working (0s • esc to interrupt)         "
+
+config Some(true), CLI Some(false), system Reduced, screen reader Reduced:
+"Working (0s • esc to interrupt)         "

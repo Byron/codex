@@ -4,7 +4,8 @@
 //! Server thread responses must never refresh these values; live preference changes belong here.
 //! Legacy Config-based lifecycle adapters remain until their interfaces are migrated.
 //! Audio preferences exclude project layers so thread cwd cannot route local capture.
-//! Effective animations also respect the TUI host's launch-time accessibility preference.
+//! Unspecified animations follow the TUI host's launch-time accessibility preferences;
+//! explicit `tui.animations` values take precedence.
 //! The selected transcript ownership and alternate-screen restrictions survive local reloads.
 
 use crate::legacy_core::config::Config;
@@ -151,7 +152,9 @@ impl LocalSettings {
         system_motion: crate::motion::MotionMode,
         screen_reader_default: crate::motion::MotionMode,
     ) {
-        if screen_reader_default == crate::motion::MotionMode::Reduced {
+        if system_motion == crate::motion::MotionMode::Reduced
+            || screen_reader_default == crate::motion::MotionMode::Reduced
+        {
             // Consult the current layers so preferences edited after startup still win.
             self.tui.animations &= layers
                 .effective_config()
@@ -159,7 +162,6 @@ impl LocalSettings {
                 .and_then(|tui| tui.get("animations"))
                 .is_some();
         }
-        self.tui.animations &= system_motion == crate::motion::MotionMode::Animated;
         let mut audio = toml::Value::Table(Default::default());
         for layer in layers.layers_low_to_high() {
             if !matches!(layer.name, codex_config::ConfigLayerSource::Project { .. })
