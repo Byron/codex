@@ -101,7 +101,7 @@ fn ultra_picker_selection_fits_event_loop_stack_budget() -> Result<()> {
                     app.config.model = Some("gpt-6-astra".into());
                     app.config.model_reasoning_effort = Some(ReasoningEffortConfig::Max);
                     app.local_settings.tui.animations = animations;
-                    app.local_settings.tui.whimsy = true;
+                    app.local_settings.tui.effects.starfield = true;
                     let mut server = start_config_write_test_app_server(&app).await?;
                     let mut tui = crate::tui::test_support::make_test_tui()?;
                     let thread = Box::pin(server.start_thread(&app.config)).await?;
