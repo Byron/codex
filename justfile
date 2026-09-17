@@ -170,10 +170,10 @@ bazel-argument-comment-lint:
 build-for-release:
     bazel build //codex-rs/cli:release_binaries
 
-# Build a self-contained local CLI package directory.
+# Build a self-contained local CLI package directory with debug symbols.
 [no-cd]
 build-cli-package package_dir=codex_dev_package_dir:
-    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --package-dir "{{ package_dir }}" --force
+    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --cargo-profile dev --package-dir "{{ package_dir }}" --force
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
