@@ -3,6 +3,7 @@
 //! Callers choose an explicit reduced-motion fallback here instead of reaching
 //! directly for time-varying spinner or shimmer helpers.
 
+use std::time::Duration;
 use std::time::Instant;
 
 use ratatui::style::Stylize;
@@ -12,6 +13,8 @@ use ratatui::text::Span;
 mod shimmer;
 
 use shimmer::shimmer_spans;
+
+pub(crate) const ACTIVITY_BLINK_INTERVAL: Duration = Duration::from_millis(/*millis*/ 600);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MotionMode {
@@ -33,6 +36,7 @@ impl MotionMode {
 pub(crate) enum ReducedMotionIndicator {
     Hidden,
     StaticBullet,
+    BlinkingBullet,
 }
 
 pub(crate) fn activity_indicator(
@@ -45,6 +49,12 @@ pub(crate) fn activity_indicator(
         MotionMode::Reduced => match reduced_motion_indicator {
             ReducedMotionIndicator::Hidden => None,
             ReducedMotionIndicator::StaticBullet => Some("•".dim()),
+            ReducedMotionIndicator::BlinkingBullet => Some(blinking_activity_indicator(
+                start_time
+                    .as_ref()
+                    .map(Instant::elapsed)
+                    .unwrap_or_default(),
+            )),
         },
     }
 }
@@ -63,7 +73,6 @@ pub(crate) fn shimmer_text(text: &str, motion_mode: MotionMode) -> Vec<Span<'sta
 }
 
 fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
-    let elapsed = start_time.map(|st| st.elapsed()).unwrap_or_default();
     if supports_color::on_cached(supports_color::Stream::Stdout)
         .map(|level| level.has_16m)
         .unwrap_or(false)
@@ -73,9 +82,18 @@ fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
             .next()
             .unwrap_or_else(|| "•".into())
     } else {
-        let blink_on = (elapsed.as_millis() / 600).is_multiple_of(2);
-        if blink_on { "•".into() } else { "◦".dim() }
+        blinking_activity_indicator(
+            start_time
+                .as_ref()
+                .map(Instant::elapsed)
+                .unwrap_or_default(),
+        )
     }
+}
+
+fn blinking_activity_indicator(elapsed: Duration) -> Span<'static> {
+    let blink_on = (elapsed.as_millis() / ACTIVITY_BLINK_INTERVAL.as_millis()).is_multiple_of(2);
+    if blink_on { "•".into() } else { "◦".dim() }
 }
 
 #[cfg(test)]
@@ -101,6 +119,24 @@ mod tests {
                 ReducedMotionIndicator::StaticBullet,
             ),
             Some("•".dim())
+        );
+        assert_eq!(
+            activity_indicator(
+                /*start_time*/ None,
+                MotionMode::Reduced,
+                ReducedMotionIndicator::BlinkingBullet,
+            ),
+            Some("•".into())
+        );
+    }
+
+    #[test]
+    fn activity_blink_changes_only_at_slow_frame_boundaries() {
+        let frames = [0, 599, 600, 1199, 1200]
+            .map(|millis| blinking_activity_indicator(Duration::from_millis(millis)));
+        assert_eq!(
+            frames,
+            ["•".into(), "•".into(), "◦".dim(), "◦".dim(), "•".into()]
         );
     }
 

@@ -5,6 +5,7 @@
 //! these pieces on one line avoids vertical layout churn in the bottom pane.
 //! Hook activity uses the remaining space or its own line on overflow, so it
 //! never displaces background-process controls.
+//! With decorative animations disabled, a slow bullet blink still signals live work.
 
 use std::time::Duration;
 use std::time::Instant;
@@ -25,6 +26,7 @@ use crate::key_hint;
 use crate::key_hint::ShortcutHint;
 use crate::line_truncation::line_width;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
+use crate::motion::ACTIVITY_BLINK_INTERVAL;
 use crate::motion::MotionMode;
 use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
@@ -230,7 +232,11 @@ impl StatusIndicator<'_> {
         if let Some(indicator) = activity_indicator(
             Some(self.timer.last_resume_at),
             motion_mode,
-            ReducedMotionIndicator::Hidden,
+            if self.timer.is_paused {
+                ReducedMotionIndicator::Hidden
+            } else {
+                ReducedMotionIndicator::BlinkingBullet
+            },
         ) {
             spans.push(indicator);
             spans.push(" ".into());
@@ -295,15 +301,16 @@ impl Renderable for StatusIndicator<'_> {
         if area.is_empty() {
             return;
         }
-        if self.row.animations_enabled || self.timer.display_started_at.is_some() {
-            let interval_ms = if self.row.animations_enabled {
-                32
+        if self.row.animations_enabled
+            || !self.timer.is_paused
+            || self.timer.display_started_at.is_some()
+        {
+            let interval = if self.row.animations_enabled {
+                Duration::from_millis(/*millis*/ 32)
             } else {
-                1_000
+                ACTIVITY_BLINK_INTERVAL
             };
-            self.row
-                .frame_requester
-                .schedule_frame_in(Duration::from_millis(interval_ms));
+            self.row.frame_requester.schedule_frame_in(interval);
         }
         Paragraph::new(Text::from(self.lines(area.width))).render(area, buf);
     }
@@ -418,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_without_spinner_when_animations_disabled() {
+    fn paused_status_hides_activity_when_animations_disabled() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let w = StatusIndicatorWidget::new(
@@ -439,6 +446,39 @@ mod tests {
             .collect::<String>();
 
         assert!(line.starts_with("Working (0s • esc to interrupt)"));
+    }
+
+    #[test]
+    fn reduced_motion_status_keeps_refreshing_while_working() {
+        let (tx, _rx) = unbounded_channel();
+        let (frame_requester, mut draw_rx) = FrameRequester::test_channel();
+        let w = StatusIndicatorWidget::new(
+            AppEventSender::new(tx),
+            frame_requester,
+            /*animations_enabled*/ false,
+        );
+        let mut timer = StatusTimer::default();
+        let mut terminal =
+            Terminal::new(TestBackend::new(/*width*/ 80, /*height*/ 1)).expect("terminal");
+        let before = Instant::now();
+        terminal
+            .draw(|f| w.with_timer(&timer).render(f.area(), f.buffer_mut()))
+            .expect("draw");
+        let deadline = draw_rx.try_recv().expect("activity refresh");
+        assert!(
+            (before + ACTIVITY_BLINK_INTERVAL..=Instant::now() + ACTIVITY_BLINK_INTERVAL)
+                .contains(&deadline)
+        );
+        insta::assert_snapshot!(terminal.backend());
+
+        timer.pause_at(Instant::now());
+        terminal
+            .draw(|f| w.with_timer(&timer).render(f.area(), f.buffer_mut()))
+            .expect("draw paused status");
+        assert_eq!(
+            draw_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        );
     }
 
     #[test]
