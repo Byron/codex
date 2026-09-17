@@ -3,6 +3,8 @@
 use super::transcript::ActiveCellLayoutCache;
 use super::transcript::ActiveCellLayoutCacheKey;
 use super::*;
+use crate::motion::ACTIVITY_BLINK_INTERVAL;
+use crate::motion::blinking_activity_indicator;
 use crate::render::RectExt;
 use crate::terminal_hyperlinks::HyperlinkParagraph;
 use crate::wrapping::RtOptions;
@@ -141,6 +143,16 @@ impl ChatWidget {
                     1
                 },
                 right: active_cell_right_reserve,
+                activity: if self.has_active_stream_tail()
+                    && self.bottom_pane.status_widget().is_none()
+                    && !self.bottom_pane.has_active_view()
+                {
+                    self.bottom_pane.status_elapsed().map(|elapsed| {
+                        (blinking_activity_indicator(elapsed), &self.frame_requester)
+                    })
+                } else {
+                    None
+                },
                 // Externally backed transcript cells can also change viewport height without an
                 // active-cell revision. Spinner cells remain safe because their indicator width
                 // is stable and their display lines are still rebuilt on every frame.
@@ -170,6 +182,7 @@ impl ChatWidget {
                     child: cell.as_ref(),
                     top: 1,
                     right: active_cell_right_reserve,
+                    activity: None,
                     persistent_layout: None,
                 })),
             );
@@ -182,6 +195,7 @@ impl ChatWidget {
                     child: cell,
                     top: 1,
                     right: active_cell_right_reserve,
+                    activity: None,
                     persistent_layout: None,
                 })),
             );
@@ -213,6 +227,8 @@ struct TranscriptAreaRenderable<'a> {
     child: &'a dyn HistoryCell,
     top: u16,
     right: u16,
+    /// A live stream borrows the working row's pulse without changing stored transcript text.
+    activity: Option<(Span<'static>, &'a FrameRequester)>,
     persistent_layout: Option<PersistentActiveCellLayout<'a>>,
 }
 
@@ -225,6 +241,7 @@ struct PersistentActiveCellLayout<'a> {
 
 impl Renderable for TranscriptAreaRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let separator_position = area.as_position();
         let area = self.child_area(area);
         let lines = self.child.display_hyperlink_lines(area.width);
         let paragraph = HyperlinkParagraph::new(&lines, Style::default());
@@ -248,6 +265,27 @@ impl Renderable for TranscriptAreaRenderable<'_> {
         };
         Clear.render(area, buf);
         paragraph.scroll(y).render(area, buf);
+        if !area.is_empty()
+            && let Some((indicator, frame_requester)) = &self.activity
+        {
+            // Stream tails reserve the left margin on every line, including continuations.
+            // Keep the pulse on-screen when the message's first line has scrolled out of view.
+            let position = if buf
+                .cell(area.as_position())
+                .is_some_and(|cell| matches!(cell.symbol(), " " | "•"))
+            {
+                area.as_position()
+            } else {
+                // Clipping inside an unbroken wrapped line can leave text in column zero.
+                separator_position
+            };
+            if let Some(cell) = buf.cell_mut(position) {
+                cell.set_symbol(indicator.content.as_ref());
+                cell.modifier.remove(Modifier::DIM);
+                cell.set_style(indicator.style);
+                frame_requester.schedule_frame_in(ACTIVITY_BLINK_INTERVAL);
+            }
+        }
     }
 
     fn desired_height(&self, width: u16) -> u16 {

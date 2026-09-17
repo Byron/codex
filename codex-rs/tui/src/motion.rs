@@ -91,7 +91,7 @@ fn animated_activity_indicator(start_time: Option<Instant>) -> Span<'static> {
     }
 }
 
-fn blinking_activity_indicator(elapsed: Duration) -> Span<'static> {
+pub(crate) fn blinking_activity_indicator(elapsed: Duration) -> Span<'static> {
     let blink_on = (elapsed.as_millis() / ACTIVITY_BLINK_INTERVAL.as_millis()).is_multiple_of(2);
     if blink_on { "•".into() } else { "◦".dim() }
 }

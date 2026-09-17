@@ -139,6 +139,7 @@ fn active_transcript_preserves_clipped_markdown_hyperlinks() {
         child: &cell,
         top: 1,
         right: 2,
+        activity: None,
         persistent_layout: None,
     };
     let area = Rect::new(
@@ -194,6 +195,103 @@ fn active_transcript_preserves_clipped_markdown_hyperlinks() {
     let output = String::from_utf8(terminal.backend().writer().clone()).expect("UTF-8 output");
     assert!(output.contains("\x1b]8;;https://example.com/\x07OSC8 label\x1b]8;;\x07"));
     assert!(output.contains("\x1b]8;;https://example.com/\x07https://example.com/\x1b]8;;\x07"));
+}
+
+#[test]
+fn streaming_activity_pulse_preserves_visible_text_when_clipped() {
+    let frame_requester = FrameRequester::test_dummy();
+    let mut frames = Vec::new();
+    for (name, width, height, text, is_first_line) in [
+        ("full", 24, 4, "First line\nSecond line\nLast line", true),
+        (
+            "continuation",
+            24,
+            2,
+            "First line\nSecond line\nLast line",
+            false,
+        ),
+        ("wrapped", 12, 2, "abcdefghijklmnopqrstuvwxyz", true),
+    ] {
+        let cell = history_cell::StreamingAgentTailCell::new(
+            text.lines()
+                .map(crate::terminal_hyperlinks::HyperlinkLine::from)
+                .collect(),
+            is_first_line,
+        );
+        for elapsed in [Duration::ZERO, ACTIVITY_BLINK_INTERVAL] {
+            let renderable = TranscriptAreaRenderable {
+                child: &cell,
+                top: 1,
+                right: 0,
+                activity: Some((blinking_activity_indicator(elapsed), &frame_requester)),
+                persistent_layout: None,
+            };
+            let area = Rect::new(/*x*/ 2, /*y*/ 3, width, height);
+            let mut buffer = Buffer::empty(area);
+            renderable.render(area, &mut buffer);
+            let rows = buffer
+                .content
+                .chunks(usize::from(width))
+                .map(|row| {
+                    row.iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            frames.push(format!("{name}, {elapsed:?}\n{}", rows.join("\n")));
+        }
+    }
+    insta::assert_snapshot!(frames.join("\n\n"));
+}
+
+#[tokio::test]
+async fn streaming_commentary_borrows_the_slow_activity_pulse() {
+    let (mut widget, _sender, mut events, _operations) = make_chatwidget_manual_with_sender().await;
+    widget.local_settings.tui.animations = false;
+    widget.on_task_started();
+    widget.last_rendered_width.set(Some(60));
+    let (frame_requester, mut draw_rx) = FrameRequester::test_channel();
+    widget.frame_requester = frame_requester;
+    let message = "The release build is finishing.";
+    widget.handle_streaming_delta(message.to_string());
+    while draw_rx.try_recv().is_ok() {}
+    widget.bottom_pane.reset_status_timer(Duration::ZERO);
+
+    let before = Instant::now();
+    let frame = render_frame(&widget, /*width*/ 60);
+    let deadline = draw_rx.try_recv().expect("live message activity refresh");
+    assert!(
+        (before + ACTIVITY_BLINK_INTERVAL..=Instant::now() + ACTIVITY_BLINK_INTERVAL)
+            .contains(&deadline)
+    );
+    assert!(contains_text(&frame, "• The release build is finishing."));
+    assert!(!widget.bottom_pane.status_indicator_visible());
+
+    widget.on_agent_message_item_completed(
+        AgentMessageItem {
+            id: "status-message".to_string(),
+            content: vec![AgentMessageContent::Text {
+                text: message.to_string(),
+            }],
+            phase: Some(MessagePhase::Commentary),
+            memory_citation: None,
+            delivery: None,
+            questions: None,
+        },
+        "turn-1",
+        /*from_replay*/ false,
+    );
+    assert!(!widget.has_active_stream_tail());
+    assert!(widget.bottom_pane.status_indicator_visible());
+    let mut committed = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = event {
+            committed.extend(cell.display_lines(/*width*/ 60).iter().map(Line::to_string));
+        }
+    }
+    assert_eq!(committed, vec![format!("• {message}")]);
 }
 
 #[tokio::test]
