@@ -28,6 +28,13 @@ pub struct WriterLockGuard {
     coordinator: Arc<WriterLockCoordinator>,
     path: PathBuf,
     file: Option<File>,
+    coordination_mode: CoordinationMode,
+}
+
+#[derive(Clone, Copy)]
+enum CoordinationMode {
+    Wait,
+    Try,
 }
 
 impl WriterLockCoordinator {
@@ -41,7 +48,20 @@ impl WriterLockCoordinator {
 
     /// Acquires exclusive writer ownership, returning `WouldBlock` for an active writer.
     pub fn acquire(self: &Arc<Self>, thread_id: ThreadId) -> io::Result<WriterLockGuard> {
-        let _coordination_lock = self.lock_coordination()?;
+        self.acquire_with_mode(thread_id, CoordinationMode::Wait)
+    }
+
+    /// Like `acquire`, but also skips busy home coordination instead of waiting for another client.
+    pub fn try_acquire(self: &Arc<Self>, thread_id: ThreadId) -> io::Result<WriterLockGuard> {
+        self.acquire_with_mode(thread_id, CoordinationMode::Try)
+    }
+
+    fn acquire_with_mode(
+        self: &Arc<Self>,
+        thread_id: ThreadId,
+        mode: CoordinationMode,
+    ) -> io::Result<WriterLockGuard> {
+        let _coordination_lock = self.lock_coordination(mode)?;
         if !self.cleanup_attempted.swap(true, Ordering::Relaxed)
             && let Err(err) = self.remove_stale_thread_locks()
         {
@@ -82,6 +102,7 @@ impl WriterLockCoordinator {
             coordinator: Arc::clone(self),
             path,
             file: Some(file),
+            coordination_mode: mode,
         })
     }
 
@@ -92,7 +113,7 @@ impl WriterLockCoordinator {
         &self,
         thread_id: ThreadId,
     ) -> io::Result<Option<File>> {
-        let coordination_lock = self.lock_coordination()?;
+        let coordination_lock = self.lock_coordination(CoordinationMode::Wait)?;
         let path = self.directory.join(format!("{thread_id}.lock"));
         match OpenOptions::new().read(true).write(true).open(path) {
             Ok(file) => match file.try_lock() {
@@ -105,7 +126,7 @@ impl WriterLockCoordinator {
         }
     }
 
-    fn lock_coordination(&self) -> io::Result<File> {
+    fn lock_coordination(&self, mode: CoordinationMode) -> io::Result<File> {
         fs::create_dir_all(&self.directory)?;
         let file = OpenOptions::new()
             .read(true)
@@ -113,11 +134,10 @@ impl WriterLockCoordinator {
             .create(true)
             .truncate(false)
             .open(self.directory.join(COORDINATION_LOCK_FILE))?;
-        file.lock().map_err(|err| {
-            io::Error::other(format!(
-                "failed to acquire thread writer coordination lock: {err}"
-            ))
-        })?;
+        match mode {
+            CoordinationMode::Wait => file.lock()?,
+            CoordinationMode::Try => file.try_lock()?,
+        }
         Ok(file)
     }
 
@@ -173,7 +193,7 @@ impl WriterLockCoordinator {
 
 impl Drop for WriterLockGuard {
     fn drop(&mut self) {
-        let coordination_lock = match self.coordinator.lock_coordination() {
+        let coordination_lock = match self.coordinator.lock_coordination(self.coordination_mode) {
             Ok(lock) => lock,
             Err(err) => {
                 warn!("failed to coordinate thread writer lock cleanup: {err}");

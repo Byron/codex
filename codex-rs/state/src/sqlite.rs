@@ -11,6 +11,7 @@ use crate::migrations::repair_legacy_recency_migration_version;
 use crate::runtime::recovery::RuntimeDbInitError;
 use crate::telemetry;
 use crate::telemetry::DbKind;
+use anyhow::Context;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use log::LevelFilter;
 use sqlx::ConnectOptions;
@@ -464,6 +465,88 @@ impl SqliteConfig {
             .max_connections(1)
             .connect_with(options)
             .await
+    }
+
+    /// Open existing storage for coordinated deletion, without migrations, repair, or busy waits.
+    pub async fn open_existing_pool(&self, path: &Path) -> Result<SqlitePool, Error> {
+        self.open_existing_pool_with_mode(path, sqlx::sqlite::SqliteLockingMode::Normal)
+            .await
+    }
+
+    pub(crate) async fn open_existing_pool_with_mode(
+        &self,
+        path: &Path,
+        mode: sqlx::sqlite::SqliteLockingMode,
+    ) -> Result<SqlitePool, Error> {
+        SqlitePoolOptions::new()
+            .max_connections(/*max*/ 1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(/*create*/ false)
+                    .locking_mode(mode)
+                    .busy_timeout(Duration::ZERO)
+                    .log_statements(LevelFilter::Off),
+            )
+            .await
+    }
+
+    /// Inspect a stable copy, including uncheckpointed WAL data, without even writing source
+    /// WAL/SHM sidecars. The caller owns the scratch directory and must close the pool first.
+    /// A concurrent commit/checkpoint makes the resource busy rather than yielding a torn copy.
+    pub async fn open_read_only_snapshot(
+        &self,
+        path: &Path,
+        scratch: &Path,
+    ) -> anyhow::Result<SqlitePool> {
+        let mut sources = Vec::new();
+        for suffix in ["", "-wal", "-journal"] {
+            let mut name = path.as_os_str().to_owned();
+            name.push(suffix);
+            let source = PathBuf::from(name);
+            match tokio::fs::metadata(&source).await {
+                Ok(metadata) => {
+                    anyhow::ensure!(
+                        suffix != "-journal",
+                        "busy database: rollback journal exists"
+                    );
+                    sources.push((source, Some((metadata.len(), metadata.modified()?))));
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound && !suffix.is_empty() =>
+                {
+                    sources.push((source, None));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        for (source, metadata) in &sources {
+            if metadata.is_some() {
+                tokio::fs::copy(
+                    source,
+                    scratch.join(
+                        source
+                            .file_name()
+                            .context("database path has no filename")?,
+                    ),
+                )
+                .await?;
+            }
+        }
+        for (source, before) in &sources {
+            let after = match tokio::fs::metadata(source).await {
+                Ok(metadata) => Some((metadata.len(), metadata.modified()?)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            anyhow::ensure!(*before == after, "busy database: changed during inspection");
+        }
+        Ok(self
+            .open_read_only_pool(
+                &scratch.join(path.file_name().context("database path has no filename")?),
+                /*busy_timeout*/ Some(Duration::ZERO),
+            )
+            .await?)
     }
 }
 

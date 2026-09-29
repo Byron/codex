@@ -1166,6 +1166,17 @@ ON CONFLICT(id) DO UPDATE SET
             return Ok(0);
         }
 
+        self.delete_threads_in_transaction(thread_ids, self.pool.begin().await?)
+            .await
+    }
+
+    /// Complete coordinated deletion using the transaction that protected the retention check.
+    /// The caller must hold it from eligibility validation until all associated cleanup finishes.
+    pub async fn delete_threads_in_transaction(
+        &self,
+        thread_ids: &[ThreadId],
+        mut tx: sqlx::Transaction<'_, Sqlite>,
+    ) -> anyhow::Result<u64> {
         let thread_id_strings = thread_ids
             .iter()
             .map(ThreadId::to_string)
@@ -1180,7 +1191,6 @@ ON CONFLICT(id) DO UPDATE SET
             self.thread_goals.delete_thread_goal(*thread_id).await?;
         }
 
-        let mut tx = self.pool.begin().await?;
         for thread_id_string in &thread_id_strings {
             sqlx::query("DELETE FROM thread_dynamic_tools WHERE thread_id = ?")
                 .bind(thread_id_string)
