@@ -18,23 +18,26 @@ use codex_rollout::SESSIONS_SUBDIR;
 use codex_rollout::find_archived_thread_path_by_id_str;
 use codex_rollout::find_thread_path_by_id_str;
 use codex_rollout::remove_thread_name_entries;
+use sqlx::Connection;
 
 use super::LocalThreadStore;
 use super::helpers::scoped_rollout_path;
 use super::helpers::validated_rollout_file_name;
+use super::retention::RetentionCheck;
 use crate::DeleteThreadParams;
 use crate::DeleteThreadsParams;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
 
-struct ThreadRollouts {
+pub(super) struct ThreadRollouts {
     thread_id: codex_protocol::ThreadId,
     rollout_ids: HashSet<codex_protocol::ThreadId>,
     paths: Vec<PathBuf>,
+    paths_are_complete: bool,
 }
 
 impl ThreadRollouts {
-    fn from_index(
+    pub(super) fn from_index(
         reference_index: &RolloutReferenceIndex,
         thread_id: codex_protocol::ThreadId,
     ) -> Self {
@@ -50,6 +53,7 @@ impl ThreadRollouts {
             thread_id,
             rollout_ids,
             paths,
+            paths_are_complete: false,
         }
     }
 
@@ -95,10 +99,14 @@ pub(super) async fn delete_thread(
 pub(super) async fn delete_threads(
     store: &LocalThreadStore,
     params: DeleteThreadsParams,
+    retention: Option<RetentionCheck<'_>>,
 ) -> ThreadStoreResult<()> {
     let thread_ids = params.thread_ids;
     if thread_ids.is_empty() {
         return Ok(());
+    }
+    if retention.is_some() && store.state_db.is_none() {
+        return Err(super::retention::conflict("state database unavailable"));
     }
 
     let mut lock_thread_ids = thread_ids.clone();
@@ -106,21 +114,108 @@ pub(super) async fn delete_threads(
     lock_thread_ids.dedup();
     let mut _lifecycle_guards = Vec::with_capacity(lock_thread_ids.len());
     for thread_id in &lock_thread_ids {
-        _lifecycle_guards.push(store.live_writer_locks.lock_lifecycle(*thread_id).await);
+        _lifecycle_guards.push(if retention.is_some() {
+            store
+                .live_writer_locks
+                .coordination(*thread_id)
+                .await
+                .lifecycle
+                .clone()
+                .try_write_owned()
+                .map_err(|_| super::retention::conflict("thread lifecycle is busy"))?
+        } else {
+            store.live_writer_locks.lock_lifecycle(*thread_id).await
+        });
     }
     let mut _live_writer_guards = Vec::with_capacity(lock_thread_ids.len());
     for &thread_id in &lock_thread_ids {
-        _live_writer_guards.push(store.live_writer_locks.lock(thread_id).await);
+        _live_writer_guards.push(if retention.is_some() {
+            store
+                .live_writer_locks
+                .coordination(thread_id)
+                .await
+                .writer
+                .clone()
+                .try_lock_owned()
+                .map_err(|_| super::retention::conflict("thread writer is busy"))?
+        } else {
+            store.live_writer_locks.lock(thread_id).await
+        });
     }
 
-    let reference_index = scan_reference_index(store).await?;
+    let mut writer_guards = if retention.is_some() {
+        let mut guards = Vec::new();
+        for &thread_id in &lock_thread_ids {
+            if store.live_recorders.lock().await.contains_key(&thread_id) {
+                return Err(super::retention::conflict("thread has an active writer"));
+            }
+            guards.push(std::sync::Arc::new(
+                store
+                    .writer_lock_coordinator
+                    .try_acquire(thread_id)
+                    .map_err(|error| super::retention::conflict(&error.to_string()))?,
+            ));
+        }
+        guards
+    } else {
+        store.acquire_writer_locks(&lock_thread_ids).await?
+    };
+    let is_retention = retention.is_some();
+    if retention.is_some() {
+        // Reject already-busy associated storage before any partial cleanup. A later race is
+        // still reported as a cleanup failure by the existing deletion path.
+        for db in store.config.sqlite.runtime_db_paths() {
+            if db.path == store.config.sqlite.state_db_path() || !db.path.exists() {
+                continue;
+            }
+            let pool = store
+                .config
+                .sqlite
+                .open_existing_pool(&db.path)
+                .await
+                .map_err(|error| {
+                    super::retention::conflict(&format!("{} unavailable: {error}", db.label))
+                })?;
+            let result = async { pool.begin_with("BEGIN IMMEDIATE").await?.rollback().await }.await;
+            pool.close().await;
+            result.map_err(|error| {
+                super::retention::conflict(&format!("{} busy or unavailable: {error}", db.label))
+            })?;
+        }
+    }
+    // Batch retention holds the exclusive connection between commits. Reuse its frozen
+    // inventory, but check each group only after acquiring its lifecycle and writer locks.
+    let scanned_index;
+    let (reference_index, state_transaction) = match retention {
+        Some(check) => {
+            let mut transaction = check
+                .connection
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|error| {
+                    super::retention::conflict(&format!("state database busy: {error}"))
+                })?;
+            check
+                .group
+                .validate(check.current, &mut transaction)
+                .await?;
+            (check.index, Some(transaction))
+        }
+        None => {
+            scanned_index = scan_reference_index(store).await?;
+            (&scanned_index, None)
+        }
+    };
     let thread_rollouts = thread_ids
         .iter()
-        .map(|thread_id| ThreadRollouts::from_index(&reference_index, *thread_id))
+        .map(|thread_id| {
+            let mut rollouts = ThreadRollouts::from_index(reference_index, *thread_id);
+            rollouts.paths_are_complete = is_retention;
+            rollouts
+        })
         .collect::<Vec<_>>();
-    ensure_no_external_references(&reference_index, thread_rollouts.as_slice())?;
+    ensure_no_external_references(reference_index, thread_rollouts.as_slice())?;
 
-    let mut writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
     if let Some(cleanup) = &store.thread_data_cleanup {
         cleanup(thread_ids.clone()).await?;
     }
@@ -132,7 +227,20 @@ pub(super) async fn delete_threads(
         }
     }
     // Retain the complete retry graph until every rollout has been removed.
-    delete_state_rows(store, &thread_ids).await?;
+    match (state_transaction, store.state_db.as_ref()) {
+        (Some(transaction), Some(state)) => {
+            state
+                .delete_threads_in_transaction(&thread_ids, transaction)
+                .await
+                .map_err(|error| ThreadStoreError::Internal {
+                    message: format!("failed to delete thread state: {error}"),
+                })?;
+        }
+        (Some(_), None) => return Err(super::retention::conflict("state database unavailable")),
+        (None, _) => {
+            delete_state_rows(store, &thread_ids).await?;
+        }
+    }
     Ok(())
 }
 
@@ -151,7 +259,7 @@ async fn delete_state_rows(
         })
 }
 
-fn ensure_no_external_references(
+pub(super) fn ensure_no_external_references(
     reference_index: &RolloutReferenceIndex,
     thread_rollouts: &[ThreadRollouts],
 ) -> ThreadStoreResult<()> {
@@ -207,35 +315,37 @@ async fn delete_thread_after_reference_check(
 ) -> ThreadStoreResult<()> {
     let thread_id = thread_rollouts.thread_id;
     let thread_id_str = thread_id.to_string();
-    let state_db_ctx = store.state_db().await;
-    match find_thread_path_by_id_str(
-        store.config.codex_home.as_path(),
-        thread_id_str.as_str(),
-        state_db_ctx.as_deref(),
-    )
-    .await
-    {
-        Ok(Some(path)) => thread_rollouts.add_path(path),
-        Ok(None) => {}
-        Err(err) => {
-            return Err(ThreadStoreError::InvalidRequest {
-                message: format!("failed to locate thread id {thread_id}: {err}"),
-            });
+    if !thread_rollouts.paths_are_complete {
+        let state_db_ctx = store.state_db().await;
+        match find_thread_path_by_id_str(
+            store.config.codex_home.as_path(),
+            thread_id_str.as_str(),
+            state_db_ctx.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(path)) => thread_rollouts.add_path(path),
+            Ok(None) => {}
+            Err(err) => {
+                return Err(ThreadStoreError::InvalidRequest {
+                    message: format!("failed to locate thread id {thread_id}: {err}"),
+                });
+            }
         }
-    }
-    match find_archived_thread_path_by_id_str(
-        store.config.codex_home.as_path(),
-        thread_id_str.as_str(),
-        state_db_ctx.as_deref(),
-    )
-    .await
-    {
-        Ok(Some(path)) => thread_rollouts.add_path(path),
-        Ok(None) => {}
-        Err(err) => {
-            return Err(ThreadStoreError::InvalidRequest {
-                message: format!("failed to locate archived thread id {thread_id}: {err}"),
-            });
+        match find_archived_thread_path_by_id_str(
+            store.config.codex_home.as_path(),
+            thread_id_str.as_str(),
+            state_db_ctx.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(path)) => thread_rollouts.add_path(path),
+            Ok(None) => {}
+            Err(err) => {
+                return Err(ThreadStoreError::InvalidRequest {
+                    message: format!("failed to locate archived thread id {thread_id}: {err}"),
+                });
+            }
         }
     }
     thread_rollouts.rollout_ids.insert(thread_id);

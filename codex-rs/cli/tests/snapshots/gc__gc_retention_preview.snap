@@ -1,0 +1,19 @@
+---
+source: cli/tests/gc.rs
+assertion_line: 119
+expression: normalized
+---
+Preview (read-only)
+UTC cutoff (last update strictly before): [cutoff]
+Would delete 6 conversations across 2 working directories (1 missing cwd).
+Estimated reclaimable conversation storage: [size].
+Additional data-preserving maintenance: [size].
+Skipped: 0 active, 0 referenced, 1 otherwise ineligible.
+Working directories and project files are not deletion targets.
+File estimates use allocated bytes; retained hard links are excluded. SQLite estimates exclude its retained reserve and are counted once. Actual disk-space gains can differ.
+[size]  1970-01-01T00:00:00.001+00:00  00000000-0000-0000-0000-000000000006  <missing cwd>  title 6\n\u{1b}[31mlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglon…
+[size]  1970-01-01T00:00:00.001+00:00  00000000-0000-0000-0000-000000000005  /project/one  title 5\n\u{1b}[31mlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglon…
+[size]  1970-01-01T00:00:00.001+00:00  00000000-0000-0000-0000-000000000004  /project/two  title 4\n\u{1b}[31mlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglon…
+[size]  1970-01-01T00:00:00.001+00:00  00000000-0000-0000-0000-000000000003  /project/one  title 3\n\u{1b}[31mlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglon…
+[size]  1970-01-01T00:00:00.001+00:00  00000000-0000-0000-0000-000000000002  /project/two  title 2\n\u{1b}[31mlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglon…
+Skipped 00000000-0000-0000-0000-000000000007: unknown last update or last update is not before cutoff

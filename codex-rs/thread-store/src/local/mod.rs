@@ -11,6 +11,7 @@ mod paginated_fork;
 mod pending_thread_metadata;
 mod projects;
 mod read_thread;
+mod retention;
 mod revert_thread;
 mod rollout_migration;
 // This lands before the reader PRs that consume the shared lineage resolver.
@@ -122,6 +123,11 @@ use crate::UpdateProjectParams;
 use crate::UpdateThreadMetadataParams;
 use crate::UpdatedProject;
 
+pub use retention::RetentionConversation;
+pub use retention::RetentionGroup;
+pub use retention::RetentionPlan;
+pub use retention::RetentionSkip;
+pub use retention::removable_file_bytes;
 pub use rollout_migration::RolloutMigrationFailureReason;
 pub use rollout_migration::RolloutMigrationMode;
 pub use rollout_migration::RolloutMigrationOptions;
@@ -805,7 +811,9 @@ impl ThreadStore for LocalThreadStore {
     }
 
     fn delete_threads(&self, params: DeleteThreadsParams) -> ThreadStoreFuture<'_, ()> {
-        Box::pin(async move { delete_thread::delete_threads(self, params).await })
+        Box::pin(async move {
+            delete_thread::delete_threads(self, params, /*retention*/ None).await
+        })
     }
 }
 

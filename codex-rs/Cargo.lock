@@ -4760,6 +4760,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows-sys 0.52.0",
  "zstd",
 ]
 

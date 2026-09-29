@@ -30,6 +30,34 @@ async fn interrupted_reclamation_releases_writer_and_resumes_without_data_loss()
     let free_before: i64 = sqlx::query_scalar("PRAGMA freelist_count")
         .fetch_one(&pool)
         .await?;
+    let db = sqlite
+        .runtime_db_paths()
+        .into_iter()
+        .find(|db| db.path == sqlite.logs_db_path())
+        .unwrap();
+    let estimate = estimate_reclamation(&pool).await?;
+    let size: i64 = sqlx::query_scalar("PRAGMA page_size")
+        .fetch_one(&pool)
+        .await?;
+    assert!(estimate > 0 && estimate <= (free_before * size - RESERVE_BYTES) as u64);
+    let ownership = try_ownership(sqlite.home()).await?.unwrap();
+    assert_eq!(
+        reclaim_database(&sqlite, &db).await?.outcome,
+        PassOutcome::Contended
+    );
+    drop(ownership);
+    let exclusive_db = RuntimeDbPath {
+        background_reclamation: false,
+        ..db
+    };
+    assert_eq!(
+        reclaim_database(&sqlite, &exclusive_db).await?.outcome,
+        PassOutcome::Contended
+    );
+    let schema: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT name, sql FROM sqlite_schema ORDER BY name")
+            .fetch_all(&pool)
+            .await?;
     let (shutdown, receiver) = watch::channel(());
     let mut connection = pool.acquire().await?.detach();
     sqlx::raw_sql(
@@ -125,6 +153,25 @@ async fn interrupted_reclamation_releases_writer_and_resumes_without_data_loss()
             .fetch_all(&pool)
             .await?,
         vec!["ok"]
+    );
+    pool.close().await;
+    assert!(reclaim_database(&sqlite, &exclusive_db).await?.pages > 0);
+    let pool = sqlite
+        .open_read_only_pool(&sqlite.logs_db_path(), /*busy_timeout*/ None)
+        .await?;
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT name, sql FROM sqlite_schema ORDER BY name"
+        )
+        .fetch_all(&pool)
+        .await?,
+        schema
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (i64, String)>(rows)
+            .fetch_all(&pool)
+            .await?,
+        expected
     );
     pool.close().await;
     tokio::fs::remove_dir_all(sqlite.home()).await?;
