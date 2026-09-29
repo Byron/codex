@@ -45,7 +45,7 @@ fn writer_locks_reject_competing_owners_and_release_their_files() {
     };
     assert_eq!(err.kind(), ErrorKind::WouldBlock);
     let other_owner = secondary
-        .acquire(other_thread_id)
+        .try_acquire(other_thread_id)
         .expect("other thread should acquire its own lock");
 
     let next_owner = std::thread::scope(|scope| {
@@ -134,6 +134,11 @@ fn publication_skips_live_writers_and_keeps_coordination_locked() {
         Err(fs::TryLockError::WouldBlock)
     ));
     let error = writer
+        .try_acquire(ThreadId::default())
+        .err()
+        .expect("nonblocking acquisition skips busy coordination");
+    assert_eq!(error.kind(), ErrorKind::WouldBlock);
+    let error = writer
         .acquire(ThreadId::default())
         .err()
         .expect("coordination contention must return an error instead of hanging");
@@ -151,5 +156,5 @@ fn publication_skips_live_writers_and_keeps_coordination_locked() {
             .unwrap()
             .expect("stale lock is idle"),
     );
-    assert!(writer.acquire(thread_id).is_ok());
+    assert!(writer.try_acquire(thread_id).is_ok());
 }
