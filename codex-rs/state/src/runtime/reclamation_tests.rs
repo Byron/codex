@@ -30,6 +30,39 @@ async fn interrupted_reclamation_releases_writer_and_resumes_without_data_loss()
     let free_before: i64 = sqlx::query_scalar("PRAGMA freelist_count")
         .fetch_one(&pool)
         .await?;
+    let db = sqlite
+        .runtime_db_paths()
+        .into_iter()
+        .find(|db| db.path == sqlite.logs_db_path())
+        .unwrap();
+    let estimate = estimate_reclamation(&pool).await?;
+    let size: i64 = sqlx::query_scalar("PRAGMA page_size")
+        .fetch_one(&pool)
+        .await?;
+    assert!(estimate > 0 && estimate <= (free_before * size - RESERVE_BYTES) as u64);
+    let ownership = try_ownership(sqlite.home()).await?.unwrap();
+    assert_eq!(
+        reclaim_database(&sqlite, &db).await?.outcome,
+        PassOutcome::Contended
+    );
+    drop(ownership);
+    let exclusive_db = RuntimeDbPath {
+        background_reclamation: false,
+        ..db
+    };
+    let is_nfs = sqlite.is_nfs().await?;
+    assert_eq!(
+        reclaim_database(&sqlite, &exclusive_db).await?.outcome,
+        if is_nfs {
+            PassOutcome::Idle
+        } else {
+            PassOutcome::Contended
+        }
+    );
+    let schema: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT name, sql FROM sqlite_schema ORDER BY name")
+            .fetch_all(&pool)
+            .await?;
     let (shutdown, receiver) = watch::channel(());
     let mut connection = pool.acquire().await?.detach();
     sqlx::raw_sql(
@@ -110,7 +143,7 @@ async fn interrupted_reclamation_releases_writer_and_resumes_without_data_loss()
         i64::from(resumed.pages)
     );
     let bytes_after_retry = tokio::fs::metadata(sqlite.logs_db_path()).await?.len();
-    if sqlite.is_nfs().await? {
+    if is_nfs {
         assert_eq!(resumed.pages, 0);
         assert_eq!(bytes_after_retry, bytes_before_retry);
     } else {
@@ -131,6 +164,30 @@ async fn interrupted_reclamation_releases_writer_and_resumes_without_data_loss()
             .fetch_all(&pool)
             .await?,
         vec!["ok"]
+    );
+    pool.close().await;
+    let reclaimed = reclaim_database(&sqlite, &exclusive_db).await?;
+    if is_nfs {
+        assert_eq!(reclaimed.pages, 0);
+    } else {
+        assert!(reclaimed.pages > 0);
+    }
+    let pool = sqlite
+        .open_read_only_pool(&sqlite.logs_db_path(), /*busy_timeout*/ None)
+        .await?;
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT name, sql FROM sqlite_schema ORDER BY name"
+        )
+        .fetch_all(&pool)
+        .await?,
+        schema
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (i64, String)>(rows)
+            .fetch_all(&pool)
+            .await?,
+        expected
     );
     pool.close().await;
     tokio::fs::remove_dir_all(sqlite.home()).await?;
