@@ -65,6 +65,7 @@ mod exec_args_tests;
 #[cfg(test)]
 #[path = "exec_server_args_tests.rs"]
 mod exec_server_args_tests;
+mod gc;
 mod marketplace_cmd;
 mod mcp_cmd;
 mod mcp_login;
@@ -218,6 +219,9 @@ enum Subcommand {
 
     /// Permanently delete a saved session by id or session name.
     Delete(DeleteCommand),
+
+    /// Reclaim unused storage; optionally preview or execute conversation retention.
+    Gc(gc::GcCommand),
 
     /// Inspect or migrate legacy local sessions to paginated thread history.
     MigrateRollouts(migrate_rollouts::MigrateRolloutsCommand),
@@ -1047,6 +1051,24 @@ fn stage_str(stage: Stage) -> &'static str {
 
 fn main() -> anyhow::Result<()> {
     codex_build_info::initialize!();
+    // GC must not create helper directories or run the arg0 janitor, even during a preview.
+    // Parse only far enough to select GC, including its help and invalid-argument paths.
+    // dispatch_cli still performs the normal, strict parse and renders any error or help.
+    if MultitoolCli::command()
+        .ignore_errors(/*yes*/ true)
+        .mut_subcommand("gc", |command| command.disable_help_flag(/*yes*/ true))
+        .try_get_matches()
+        .is_ok_and(|matches| matches.subcommand_name() == Some("gc"))
+    {
+        return tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(Box::pin(dispatch_cli(
+                Arg0DispatchPaths::default(),
+                /*remote_control_disabled*/ false,
+            )))
+            .map(|_| ());
+    }
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
         // Finish polling the large subcommand dispatcher before polling interactive TUI events.
@@ -1648,6 +1670,24 @@ async fn dispatch_cli(
             )
             .await?;
         }
+        Some(Subcommand::Gc(command)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "gc",
+            )?;
+            gc::run(
+                command,
+                root_config_overrides,
+                loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?,
+                ConfigOverrides {
+                    cwd: interactive.cwd.take(),
+                    ..Default::default()
+                },
+                root_strict_config,
+            )
+            .await?;
+        }
         Some(Subcommand::Unarchive(cmd)) => {
             let output = run_session_archive_cli_command(
                 codex_tui::SessionArchiveAction::Unarchive,
@@ -2028,6 +2068,7 @@ fn profile_v2_for_subcommand<'a>(
         | Subcommand::Queue(_)
         | Subcommand::Archive(_)
         | Subcommand::Delete(_)
+        | Subcommand::Gc(_)
         | Subcommand::Unarchive(_)
         | Subcommand::Fork(_)
         | Subcommand::Mcp(_)
@@ -2037,7 +2078,7 @@ fn profile_v2_for_subcommand<'a>(
             subcommand: DebugSubcommand::PromptInput(_),
         }) => Ok(Some(profile_v2)),
         _ => anyhow::bail!(
-            "--profile only applies to runtime commands, `codex mcp`, and `codex migrate-nfs-db`: `codex`, `codex exec`, `codex review`, `codex resume`, `codex queue`, `codex archive`, `codex delete`, `codex unarchive`, `codex fork`, `codex mcp`, `codex migrate-nfs-db`, `codex sandbox`, and `codex debug prompt-input`."
+            "--profile only applies to runtime commands, `codex gc`, `codex mcp`, and `codex migrate-nfs-db`: `codex`, `codex exec`, `codex review`, `codex resume`, `codex queue`, `codex archive`, `codex delete`, `codex unarchive`, `codex fork`, `codex gc`, `codex mcp`, `codex migrate-nfs-db`, `codex sandbox`, and `codex debug prompt-input`."
         ),
     }
 }
@@ -2421,7 +2462,8 @@ fn unsupported_subcommand_name_for_strict_config(
         | Some(Subcommand::Delete(_))
         | Some(Subcommand::Unarchive(_))
         | Some(Subcommand::Fork(_))
-        | Some(Subcommand::Doctor(_)) => None,
+        | Some(Subcommand::Doctor(_))
+        | Some(Subcommand::Gc(_)) => None,
         Some(Subcommand::AppServer(app_server)) if app_server.subcommand.is_none() => None,
         Some(Subcommand::AppServer(app_server)) => {
             Some(app_server_subcommand_name(app_server.subcommand.as_ref()))

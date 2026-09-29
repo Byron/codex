@@ -377,3 +377,23 @@ fn compress_now(path: &Path) -> anyhow::Result<()> {
     fs::remove_file(path)?;
     Ok(())
 }
+
+#[tokio::test]
+async fn strict_deletion_scan_preserves_attached_children() -> anyhow::Result<()> {
+    let home = TempDir::new()?;
+    let parent_id = thread_id(Uuid::from_u128(100))?;
+    let child_id = thread_id(Uuid::from_u128(101))?;
+    let parent_path = active_rollout_path(home.path(), Uuid::from_u128(100));
+    let child_path = active_rollout_path(home.path(), Uuid::from_u128(101));
+    write_rollout(parent_path, parent_id, /*history_base*/ None)?;
+    write_rollout(child_path.clone(), child_id, /*history_base*/ None)?;
+    let mut metadata: serde_json::Value = serde_json::from_str(&fs::read_to_string(&child_path)?)?;
+    metadata["payload"]["forked_from_id"] = serde_json::json!(parent_id);
+    metadata["payload"]["attached_thread"] = serde_json::json!(true);
+    fs::write(&child_path, format!("{metadata}\n"))?;
+
+    let index = RolloutReferenceIndex::scan_for_deletion(home.path()).await?;
+    assert_eq!(index.attached_child(&[parent_id]), Some(child_id));
+    assert_eq!(index.attached_child(&[child_id]), None);
+    Ok(())
+}

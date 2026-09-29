@@ -143,7 +143,7 @@ async fn configured_log_directory_lock_is_shared_by_reader_and_writer_config_clo
         .close()
         .await;
 
-    for read_only in [false, true] {
+    for (read_only, existing) in [(false, false), (true, false), (false, true)] {
         let sqlite = SqliteConfig::new_for_testing(sqlite_home.as_path().abs())
             .with_local_logs_home(logs_home.clone());
         let clone = sqlite.clone();
@@ -155,6 +155,8 @@ async fn configured_log_directory_lock_is_shared_by_reader_and_writer_config_clo
             sqlite
                 .open_read_only_pool(&logs_path, /*busy_timeout*/ None)
                 .await?
+        } else if existing {
+            sqlite.open_existing_pool(&logs_path).await?
         } else {
             sqlite.open_read_write_pool(&logs_path).await?
         };
@@ -172,6 +174,56 @@ async fn configured_log_directory_lock_is_shared_by_reader_and_writer_config_clo
         drop(clone);
         cleanup_lock.try_lock()?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn gc_snapshot_includes_wal_without_modifying_source_files() -> anyhow::Result<()> {
+    let root = crate::runtime::test_support::unique_temp_dir();
+    let source = root.join("source");
+    let scratch = root.join("scratch");
+    std::fs::create_dir_all(&source)?;
+    std::fs::create_dir_all(&scratch)?;
+    let _cleanup = scopeguard::guard(root, |root| {
+        let _ = std::fs::remove_dir_all(root);
+    });
+    let sqlite = SqliteConfig::new_for_testing(source.abs());
+    let path = sqlite.state_db_path();
+    let pool = sqlite.open_read_write_pool(&path).await?;
+    sqlx::query("CREATE TABLE saved (value TEXT)")
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO saved VALUES ('uncheckpointed')")
+        .execute(&pool)
+        .await?;
+    let before = std::fs::read_dir(&source)?
+        .map(|entry| {
+            let path = entry?.path();
+            Ok((
+                path.clone(),
+                (std::fs::read(&path)?, std::fs::metadata(path)?.modified()?),
+            ))
+        })
+        .collect::<std::io::Result<std::collections::BTreeMap<_, _>>>()?;
+    let snapshot = sqlite.open_read_only_snapshot(&path, &scratch).await?;
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT value FROM saved")
+            .fetch_all(&snapshot)
+            .await?,
+        vec!["uncheckpointed"]
+    );
+    snapshot.close().await;
+    let after = std::fs::read_dir(&source)?
+        .map(|entry| {
+            let path = entry?.path();
+            Ok((
+                path.clone(),
+                (std::fs::read(&path)?, std::fs::metadata(path)?.modified()?),
+            ))
+        })
+        .collect::<std::io::Result<std::collections::BTreeMap<_, _>>>()?;
+    assert_eq!(before, after);
+    pool.close().await;
     Ok(())
 }
 

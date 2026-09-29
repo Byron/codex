@@ -37,6 +37,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 zstd = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 codex-protocol-test-support = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

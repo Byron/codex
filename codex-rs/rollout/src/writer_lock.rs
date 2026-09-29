@@ -33,6 +33,12 @@ pub struct WriterLockGuard {
     file: Option<File>,
 }
 
+#[derive(Clone, Copy)]
+enum CoordinationMode {
+    Wait,
+    Try,
+}
+
 impl WriterLockCoordinator {
     /// Uses the same lock namespace as existing local thread-store writers.
     pub fn new(codex_home: &Path) -> Self {
@@ -44,6 +50,19 @@ impl WriterLockCoordinator {
 
     /// Acquires exclusive writer ownership, returning `WouldBlock` for an active writer.
     pub fn acquire(self: &Arc<Self>, thread_id: ThreadId) -> io::Result<WriterLockGuard> {
+        self.acquire_with_mode(thread_id, CoordinationMode::Wait)
+    }
+
+    /// Like `acquire`, but also skips busy home coordination instead of waiting for another client.
+    pub fn try_acquire(self: &Arc<Self>, thread_id: ThreadId) -> io::Result<WriterLockGuard> {
+        self.acquire_with_mode(thread_id, CoordinationMode::Try)
+    }
+
+    fn acquire_with_mode(
+        self: &Arc<Self>,
+        thread_id: ThreadId,
+        mode: CoordinationMode,
+    ) -> io::Result<WriterLockGuard> {
         let file = self.open_coordination()?;
         // Never queue a directory sweep behind another writer. Removal remains exclusive.
         let have_exclusive = !self.cleanup_attempted.swap(true, Ordering::Relaxed)
@@ -57,7 +76,12 @@ impl WriterLockCoordinator {
                 warn!("failed to clean up stale thread writer locks: {err}");
             }
         } else {
-            Self::wait_for_coordination(|| file.try_lock_shared())?;
+            match mode {
+                CoordinationMode::Wait => {
+                    Self::wait_for_coordination(|| file.try_lock_shared())?;
+                }
+                CoordinationMode::Try => file.try_lock_shared()?,
+            }
         }
         let _coordination_lock = file;
 
