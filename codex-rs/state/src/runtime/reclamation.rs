@@ -6,6 +6,7 @@ use sqlx::ConnectOptions;
 use sqlx::Connection;
 use sqlx::SqliteConnection;
 use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::sqlite::SqliteLockingMode;
 use sqlx::sqlite::SqliteSynchronous;
 use std::fs::File;
 use std::path::Path;
@@ -43,13 +44,8 @@ impl SqliteReclamationWorker {
             let mut scheduled = sqlite
                 .runtime_db_paths()
                 .into_iter()
-                .filter_map(|db| {
-                    if db.background_reclamation {
-                        Some((db, Instant::now(), ReclamationState::default()))
-                    } else {
-                        None
-                    }
-                })
+                .filter(|db| db.background_reclamation)
+                .map(|db| (db, Instant::now(), ReclamationState::default()))
                 .collect::<Vec<_>>();
             let mut owner = None;
             let mut delay = IDLE_INTERVAL;
@@ -98,6 +94,7 @@ async fn visit(
                     pages: PASS_PAGES,
                 },
                 batch_pages: state.batch_pages,
+                locking_mode: SqliteLockingMode::Normal,
             },
             shutdown,
         )
@@ -129,18 +126,69 @@ async fn try_ownership(home: &Path) -> std::io::Result<Option<File>> {
     }
 }
 
-pub(crate) struct ReclamationPass {
-    pub(crate) pages: u32,
-    outcome: PassOutcome,
+pub struct ReclamationPass {
+    pub pages: u32,
+    pub outcome: PassOutcome,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum PassOutcome {
+pub enum PassOutcome {
     Idle,
     Active,
     Contended,
     Interrupted,
     Shutdown,
+}
+
+/// Estimate only policy-approved free pages, excluding the reusable reserve and WAL bytes.
+pub async fn estimate_reclamation(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> {
+    let (mode, size, pages, free): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT auto_vacuum, page_size, page_count, freelist_count \
+         FROM pragma_auto_vacuum, pragma_page_size, pragma_page_count, pragma_freelist_count",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((reclaimable_pages(mode, size, pages, free) * size) as u64)
+}
+
+fn reclaimable_pages(mode: i64, size: i64, pages: i64, free: i64) -> i64 {
+    if mode != 2 || size <= 0 || free * size < MIN_FREE_BYTES || free < pages / 4 {
+        return 0;
+    }
+    (free - (RESERVE_BYTES / size).max(pages / 10)).max(0)
+}
+
+/// Run the existing bounded, nonblocking vacuum/checkpoint policy without initializing any DB.
+pub async fn reclaim_database(
+    sqlite: &SqliteConfig,
+    db: &RuntimeDbPath,
+) -> anyhow::Result<ReclamationPass> {
+    let Some(_owner) = try_ownership(sqlite.home()).await? else {
+        return Ok(ReclamationPass {
+            pages: 0,
+            outcome: PassOutcome::Contended,
+        });
+    };
+    let (_shutdown, receiver) = watch::channel(());
+    reclaim(
+        &db.path,
+        ReclamationOptions {
+            budget: Budget {
+                deadline: Some(Instant::now() + Duration::from_secs(/*secs*/ 5)),
+                pages: u32::MAX,
+            },
+            batch_pages: BATCH_PAGES,
+            // Exclusive WAL access fails immediately if another connection has the database open.
+            // This protects writers that have not been audited for concurrent reclamation.
+            locking_mode: if db.background_reclamation {
+                SqliteLockingMode::Normal
+            } else {
+                SqliteLockingMode::Exclusive
+            },
+        },
+        &receiver,
+    )
+    .await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -194,6 +242,7 @@ struct Budget {
 struct ReclamationOptions {
     budget: Budget,
     batch_pages: u32,
+    locking_mode: SqliteLockingMode,
 }
 
 impl From<Budget> for ReclamationOptions {
@@ -201,6 +250,7 @@ impl From<Budget> for ReclamationOptions {
         Self {
             budget,
             batch_pages: BATCH_PAGES,
+            locking_mode: SqliteLockingMode::Normal,
         }
     }
 }
@@ -210,6 +260,7 @@ async fn reclaim(
     options: impl Into<ReclamationOptions>,
     shutdown: &watch::Receiver<()>,
 ) -> anyhow::Result<ReclamationPass> {
+    let options = options.into();
     if !tokio::fs::try_exists(path).await? {
         return Ok(ReclamationPass {
             pages: 0,
@@ -224,6 +275,7 @@ async fn reclaim(
         &SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(false)
+            .locking_mode(options.locking_mode)
             .busy_timeout(Duration::ZERO)
             .synchronous(SqliteSynchronous::Normal)
             // Keep commits from doing checkpoint I/O while holding up writers.
@@ -262,6 +314,7 @@ async fn reclaim_pages(
     let ReclamationOptions {
         budget,
         batch_pages,
+        locking_mode: _,
     } = options.into();
     if budget
         .deadline
@@ -299,7 +352,7 @@ async fn reclaim_pages(
         .await?;
 
         // Require incremental auto-vacuum and at least 64 MiB and 25% free space.
-        if mode != 2 || free * page_size < MIN_FREE_BYTES || free < pages / 4 {
+        if reclaimable_pages(mode, page_size, pages, free) == 0 {
             outcome = PassOutcome::Idle;
             return Ok(());
         }

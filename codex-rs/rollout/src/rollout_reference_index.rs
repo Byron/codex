@@ -23,14 +23,22 @@ use crate::rollout_file_name::RolloutFileName;
 #[derive(Debug, Default)]
 pub struct RolloutReferenceIndex {
     rollouts_by_id: HashMap<RolloutId, IndexedRollout>,
+    rollout_ids_by_thread: HashMap<ThreadId, Vec<RolloutId>>,
     reference_counts_by_rollout: HashMap<RolloutId, usize>,
 }
 
 #[derive(Debug)]
 struct IndexedRollout {
     thread_id: ThreadId,
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     history_base: Option<HistoryPosition>,
+    parent_thread_id: Option<ThreadId>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ScanMode {
+    BestEffort,
+    Strict,
 }
 
 impl RolloutReferenceIndex {
@@ -42,8 +50,37 @@ impl RolloutReferenceIndex {
                 codex_home.join(SESSIONS_SUBDIR),
             ],
             /*thread_ids*/ None,
+            ScanMode::BestEffort,
         )
         .await
+    }
+
+    /// Refuse automatic deletion when metadata or a history reference cannot be resolved.
+    pub async fn scan_for_deletion(codex_home: &Path) -> io::Result<Self> {
+        let index = Self::scan_paths(
+            vec![
+                codex_home.join(ARCHIVED_SESSIONS_SUBDIR),
+                codex_home.join(SESSIONS_SUBDIR),
+            ],
+            /*thread_ids*/ None,
+            ScanMode::Strict,
+        )
+        .await?;
+        for &id in index.rollouts_by_id.keys() {
+            let mut seen = HashSet::from([id]);
+            let mut current = id;
+            while let Some(base) = index.history_base(current) {
+                if !index.rollouts_by_id.contains_key(&base.thread_id)
+                    || !seen.insert(base.thread_id)
+                {
+                    return Err(io::Error::other(format!(
+                        "unresolved or cyclic history reference from {id}"
+                    )));
+                }
+                current = base.thread_id;
+            }
+        }
+        Ok(index)
     }
 
     /// Scans only unarchived rollouts to locate files that still need to be archived.
@@ -54,6 +91,7 @@ impl RolloutReferenceIndex {
         Self::scan_paths(
             vec![codex_home.join(SESSIONS_SUBDIR)],
             /*thread_ids*/ None,
+            ScanMode::BestEffort,
         )
         .await
     }
@@ -68,12 +106,18 @@ impl RolloutReferenceIndex {
         thread_ids: &[ThreadId],
     ) -> io::Result<Self> {
         let thread_ids = thread_ids.iter().copied().collect();
-        Self::scan_paths(vec![codex_home.join(SESSIONS_SUBDIR)], Some(&thread_ids)).await
+        Self::scan_paths(
+            vec![codex_home.join(SESSIONS_SUBDIR)],
+            Some(&thread_ids),
+            ScanMode::BestEffort,
+        )
+        .await
     }
 
     async fn scan_paths(
         mut stack: Vec<PathBuf>,
         thread_ids: Option<&HashSet<ThreadId>>,
+        mode: ScanMode,
     ) -> io::Result<Self> {
         let mut rollouts_by_id = HashMap::new();
         while let Some(directory) = stack.pop() {
@@ -93,33 +137,84 @@ impl RolloutReferenceIndex {
                     continue;
                 }
                 if !file_type.is_file() {
+                    if mode == ScanMode::Strict {
+                        return Err(io::Error::other(format!(
+                            "unresolved rollout entry: {}",
+                            path.display()
+                        )));
+                    }
                     continue;
                 }
                 let Some(rollout_file) = RolloutFile::from_path(path) else {
                     continue;
                 };
                 let Some(file_name) = RolloutFileName::parse(rollout_file.plain_file_name()) else {
+                    if mode == ScanMode::Strict {
+                        return Err(io::Error::other(format!(
+                            "invalid rollout filename: {}",
+                            rollout_file.path().display()
+                        )));
+                    }
                     continue;
                 };
                 if thread_ids.is_some_and(|ids| !ids.contains(&file_name.thread_id())) {
                     continue;
                 }
                 let rollout_id = file_name.rollout_id();
-                let Ok(meta) = crate::read_session_meta_line(rollout_file.path()).await else {
-                    continue;
+                let meta = match crate::read_session_meta_line(rollout_file.path()).await {
+                    Ok(meta) => meta,
+                    Err(error) if mode == ScanMode::Strict => {
+                        return Err(io::Error::other(format!(
+                            "incomplete metadata at {}: {error}",
+                            rollout_file.path().display()
+                        )));
+                    }
+                    Err(_) => continue,
                 };
-                if let Entry::Vacant(entry) = rollouts_by_id.entry(rollout_id) {
-                    entry.insert(IndexedRollout {
-                        thread_id: meta.meta.id,
-                        path: rollout_file.into_path(),
-                        history_base: meta.meta.history_base,
-                    });
+                let source_parent = meta.meta.source.parent_thread_id();
+                if mode == ScanMode::Strict
+                    && (file_name.thread_id() != meta.meta.id
+                        || matches!((meta.meta.parent_thread_id, source_parent), (Some(a), Some(b)) if a != b))
+                {
+                    return Err(io::Error::other(format!(
+                        "inconsistent ownership at {}",
+                        rollout_file.path().display()
+                    )));
+                }
+                let parent_thread_id = meta.meta.parent_thread_id.or(source_parent);
+                match rollouts_by_id.entry(rollout_id) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(IndexedRollout {
+                            thread_id: meta.meta.id,
+                            paths: vec![rollout_file.into_path()],
+                            history_base: meta.meta.history_base,
+                            parent_thread_id,
+                        });
+                    }
+                    Entry::Occupied(mut entry) if mode == ScanMode::Strict => {
+                        let previous = entry.get_mut();
+                        if previous.thread_id != meta.meta.id
+                            || previous.history_base != meta.meta.history_base
+                            || previous.parent_thread_id != parent_thread_id
+                        {
+                            return Err(io::Error::other(format!(
+                                "conflicting metadata for rollout {rollout_id}"
+                            )));
+                        }
+                        previous.paths.push(rollout_file.into_path());
+                    }
+                    Entry::Occupied(_) => {}
                 }
             }
         }
 
         let mut reference_counts_by_rollout = HashMap::new();
+        let mut rollout_ids_by_thread: HashMap<ThreadId, Vec<RolloutId>> = HashMap::new();
         for (rollout_id, rollout) in &rollouts_by_id {
+            rollout_ids_by_thread
+                .entry(rollout.thread_id)
+                .or_default()
+                .push(*rollout_id);
             let Some(history_base) = rollout.history_base else {
                 continue;
             };
@@ -132,6 +227,7 @@ impl RolloutReferenceIndex {
         }
         Ok(Self {
             rollouts_by_id,
+            rollout_ids_by_thread,
             reference_counts_by_rollout,
         })
     }
@@ -156,10 +252,23 @@ impl RolloutReferenceIndex {
         &self,
         thread_id: ThreadId,
     ) -> impl Iterator<Item = (RolloutId, &Path)> {
+        self.rollout_ids_by_thread
+            .get(&thread_id)
+            .into_iter()
+            .flatten()
+            .flat_map(|rollout_id| {
+                self.rollouts_by_id[rollout_id]
+                    .paths
+                    .iter()
+                    .map(move |path| (*rollout_id, path.as_path()))
+            })
+    }
+
+    /// Thread ownership and spawn parents recorded in rollout metadata, without listing repairs.
+    pub fn thread_parents(&self) -> impl Iterator<Item = (ThreadId, Option<ThreadId>)> + '_ {
         self.rollouts_by_id
-            .iter()
-            .filter(move |(_, rollout)| rollout.thread_id == thread_id)
-            .map(|(rollout_id, rollout)| (*rollout_id, rollout.path.as_path()))
+            .values()
+            .map(|rollout| (rollout.thread_id, rollout.parent_thread_id))
     }
 }
 
