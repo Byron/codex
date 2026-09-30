@@ -626,10 +626,8 @@ impl ChatWidget {
     fn finish_paste_burst_tick(&mut self, frame_requester: FrameRequester, flushed: bool) -> bool {
         if flushed {
             self.refresh_startup_recovery();
-            // A paste just flushed; request an immediate redraw and skip this frame.
-            self.request_redraw();
-            true
-        } else if self.is_in_paste_burst() {
+        }
+        if self.is_in_paste_burst() {
             // While capturing a burst, schedule a follow-up tick and skip this frame
             // to avoid redundant renders between ticks.
             frame_requester.schedule_frame_in(
