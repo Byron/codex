@@ -1,0 +1,28 @@
+---
+source: tui/src/app/owned_transcript_input_tests.rs
+assertion_line: 125
+expression: screen(&tui)
+---
+updated output
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› first line
+  second linex
+
+  GPT-5.6-Sol default · /tmp/project

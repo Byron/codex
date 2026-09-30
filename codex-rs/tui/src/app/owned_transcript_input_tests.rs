@@ -81,6 +81,55 @@ fn screen(tui: &tui::Tui) -> String {
     normalize_snapshot_paths(rendered)
 }
 
+#[tokio::test]
+async fn composer_edits_render_on_the_next_ready_frame() -> Result<()> {
+    let (mut app, _events, _operations) = make_test_app_with_channels().await;
+    let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.set_owned_screen(/*owned*/ true)?;
+    let size = tui.terminal.size()?;
+    tokio::time::pause();
+
+    for (key, expected) in [
+        (KeyCode::Backspace, "first line\nsecond lin"),
+        (KeyCode::Left, "first line\nsecond line"),
+        (KeyCode::Char('x'), "first line\nsecond linex"),
+    ] {
+        app.chat_widget
+            .apply_external_edit("first line\nsecond line".to_string());
+        app.transcript_cells = vec![Arc::new(PlainHistoryCell::new(vec![
+            "previous output".into(),
+        ]))];
+        app.render_owned_transcript(&mut tui, size)?;
+        let before =
+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
+        app.transcript_cells = vec![Arc::new(PlainHistoryCell::new(vec![
+            "updated output".into(),
+        ]))];
+
+        app.handle_tui_event(&mut tui, &mut server, TuiEvent::Key(key.into()))
+            .await?;
+        assert_eq!(
+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal),
+            &before,
+            "composer input should not paint the screen before applying the edit"
+        );
+
+        tokio::time::advance(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay())
+            .await;
+        app.handle_tui_event(&mut tui, &mut server, TuiEvent::Draw)
+            .await?;
+        assert_eq!(app.chat_widget.composer_text_with_pending(), expected);
+        assert!(screen(&tui).contains("updated output"));
+    }
+    insta::assert_snapshot!("owned_composer_input_single_draw", screen(&tui));
+
+    tokio::time::resume();
+    server.shutdown().await?;
+    tui.set_owned_screen(/*owned*/ false)?;
+    Ok(())
+}
+
 fn complete_plan_turn(app: &mut App) {
     app.chat_widget
         .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
