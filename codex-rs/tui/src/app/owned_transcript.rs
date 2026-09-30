@@ -422,7 +422,20 @@ impl App {
                 return Ok(false);
             }
         }
-        if matches!(event, TuiEvent::Key(key) if key.kind != KeyEventKind::Release) {
+        // Refresh geometry only for transcript interactions. Composer edits render once,
+        // on the scheduled draw after input and paste-burst buffering have been applied.
+        if let TuiEvent::Key(key) = event
+            && key.kind != KeyEventKind::Release
+            && (self.transcript_view.has_active_interaction()
+                || self.backtrack.overlay_preview_active
+                || self.transcript_view.owns_interaction_key(*key)
+                || self.keymap.app.find_transcript.is_pressed(*key)
+                || self.keymap.app.focus_activity.is_pressed(*key)
+                || matches!(
+                    key.code,
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::PageUp | KeyCode::PageDown
+                ))
+        {
             let size = tui.prepare_draw_size()?;
             self.render_owned_transcript(tui, size)?;
         }
