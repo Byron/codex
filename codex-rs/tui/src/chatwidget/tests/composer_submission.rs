@@ -13,6 +13,45 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use pretty_assertions::assert_eq;
 use std::collections::VecDeque;
 
+#[tokio::test(start_paused = true)]
+async fn paste_burst_tick_renders_ready_typing_and_multiline_paste() {
+    for payload in ["x", "first line\n\tsecond line\nthird line\n"] {
+        let (mut chat, _events, mut operations) =
+            make_chatwidget_manual(/*model_override*/ None).await;
+        chat.thread_id = Some(ThreadId::new());
+        for ch in payload.chars() {
+            let key = match ch {
+                '\n' => KeyCode::Enter,
+                '\t' => KeyCode::Tab,
+                ch => KeyCode::Char(ch),
+            };
+            chat.handle_key_event(key.into());
+        }
+
+        assert!(chat.handle_paste_burst_tick(FrameRequester::test_dummy()));
+        assert_eq!(chat.bottom_pane.composer_text(), "");
+        assert!(operations.try_recv().is_err());
+
+        tokio::time::advance(std::time::Duration::from_secs(/*secs*/ 1)).await;
+        assert!(!chat.handle_paste_burst_tick(FrameRequester::test_dummy()));
+        assert_eq!(chat.bottom_pane.composer_text(), payload);
+        assert!(operations.try_recv().is_err());
+
+        chat.handle_key_event(KeyCode::Enter.into());
+        let Op::UserTurn { items, .. } = next_submit_op(&mut operations) else {
+            panic!("expected submitted user turn");
+        };
+        assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: payload.trim().to_string(),
+                text_elements: Vec::new(),
+            }]
+        );
+        assert!(operations.try_recv().is_err());
+    }
+}
+
 #[tokio::test]
 async fn composer_submission_sends_once_and_requests_latest() {
     let (mut chat, mut events, mut operations) =
