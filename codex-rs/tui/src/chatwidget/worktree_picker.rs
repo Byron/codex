@@ -1,5 +1,6 @@
 //! Worktree choices for local, feature-enabled session commands.
 //!
+//! New conversations stay in the current checkout; forks offer a checkout picker.
 //! Shared picker presentation preserves request identity and action safety checks.
 
 use super::*;
@@ -24,7 +25,7 @@ impl ChatWidget {
         mode: ManagedWorktreeMode,
         name: Option<String>,
     ) {
-        if !self.managed_worktree_available() {
+        if matches!(mode, ManagedWorktreeMode::New) || !self.managed_worktree_available() {
             match mode {
                 ManagedWorktreeMode::New => {
                     self.app_event_tx.send(AppEvent::NewSession { name });
