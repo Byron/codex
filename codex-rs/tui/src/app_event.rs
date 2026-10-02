@@ -1415,6 +1415,9 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Restore the other recently selected model and its reasoning effort.
+    ToggleRecentModel,
+
     /// Apply an explicit Astra selection and offer the flourish only if it changed the model on
     /// its original task. Automatic model updates do not use this event.
     AstraSelectedFromModelPicker {
