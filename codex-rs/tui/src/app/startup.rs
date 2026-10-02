@@ -868,6 +868,9 @@ See the Codex keymap documentation for supported actions and examples."
         let mut app = Self {
             feature_write_lock: Arc::default(),
             model_catalog,
+            recent_models: super::recent_models::RecentModels::load(
+                local_settings.codex_home.as_path(),
+            ),
             session_telemetry: session_telemetry.clone(),
             app_event_tx,
             chat_widget,

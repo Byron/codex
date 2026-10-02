@@ -179,6 +179,8 @@ pub struct TuiChatKeymap {
     pub decrease_reasoning_effort: Option<KeybindingsSpec>,
     /// Increase the active reasoning effort.
     pub increase_reasoning_effort: Option<KeybindingsSpec>,
+    /// Switch between the two most recently selected models.
+    pub toggle_recent_model: Option<KeybindingsSpec>,
     /// Switch to the previous available permission mode.
     pub previous_permission_mode: Option<KeybindingsSpec>,
     /// Switch to the next available permission mode.

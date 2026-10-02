@@ -774,6 +774,8 @@ impl ChatComposer {
                     .primary_hint(KeymapContext::Chat, "decrease_reasoning_effort"),
                 reasoning_up_key: default_keymap
                     .primary_hint(KeymapContext::Chat, "increase_reasoning_effort"),
+                toggle_recent_model_key: default_keymap
+                    .primary_hint(KeymapContext::Chat, "toggle_recent_model"),
                 toggle_voice_key: default_keymap.primary_hint(KeymapContext::Chat, "toggle_voice"),
             },
             has_focus: has_input_focus,
@@ -1064,6 +1066,8 @@ impl ChatComposer {
             keymap.primary_hint(KeymapContext::Chat, "decrease_reasoning_effort");
         self.footer.reasoning_up_key =
             keymap.primary_hint(KeymapContext::Chat, "increase_reasoning_effort");
+        self.footer.toggle_recent_model_key =
+            keymap.primary_hint(KeymapContext::Chat, "toggle_recent_model");
         self.footer.toggle_voice_key = keymap.primary_hint(KeymapContext::Chat, "toggle_voice");
     }
 

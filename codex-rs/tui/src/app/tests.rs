@@ -6130,6 +6130,7 @@ async fn make_test_app() -> Box<App> {
 
     Box::new(App {
         feature_write_lock: Arc::default(),
+        recent_models: Default::default(),
         model_catalog: chat_widget.model_catalog(),
         session_telemetry,
         app_event_tx,
@@ -6250,6 +6251,7 @@ pub(super) async fn make_test_app_with_channels() -> (
     (
         Box::new(App {
             feature_write_lock: Arc::default(),
+            recent_models: Default::default(),
             model_catalog: chat_widget.model_catalog(),
             session_telemetry,
             app_event_tx,

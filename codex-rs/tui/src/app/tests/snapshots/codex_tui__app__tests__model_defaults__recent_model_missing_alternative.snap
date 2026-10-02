@@ -1,0 +1,5 @@
+---
+source: tui/src/app/tests/model_defaults_tests.rs
+expression: next_history_message(&mut events)
+---
+• Choose a second model with /model to switch between recent models.

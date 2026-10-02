@@ -1609,6 +1609,7 @@ impl App {
                 self.chat_widget.handle_thread_session(session);
             }
         }
+        self.remember_current_model();
         let should_buffer_initial_replay = !turns.is_empty();
         let replayed_final_items = realtime_delivery::completed_agent_items_from_turns(&turns);
         let replayed_voice_texts = realtime_delivery::replayed_voice_texts_from_turns(&turns);
@@ -1976,6 +1977,7 @@ impl App {
         self.restore_voice_owner_after_replay();
         self.chat_widget
             .set_queue_autosend_suppressed(/*suppressed*/ false);
+        self.remember_current_model();
         self.chat_widget
             .set_initial_user_message_submit_suppressed(/*suppressed*/ false);
         self.chat_widget.submit_initial_user_message_if_pending();
