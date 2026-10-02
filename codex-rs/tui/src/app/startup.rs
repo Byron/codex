@@ -1530,7 +1530,7 @@ See the Codex keymap documentation for supported actions and examples."
                             backends.parked_inputs_mut(slot).remove(thread_id);
                         }
                         let switch_backend = match &event {
-                            AppEvent::ChooseNewSessionCheckout { name } | AppEvent::NewSession { name }
+                            AppEvent::NewSession { name }
                                 if multi_backend => app.other_new_session_backend(&backends).await
                                     .map(|owner| (owner, NewBackendSession::Fresh { name: name.clone() })),
                             AppEvent::CycleNewConversationBackend => {
