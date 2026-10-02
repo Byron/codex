@@ -7,6 +7,47 @@ use serde_json::Value;
 use serde_json::json;
 
 #[test]
+fn recent_model_shortcut_preserves_existing_bindings_and_supports_remapping() {
+    for configured in ["alt-m", "alt-m f12"] {
+        let config = serde_json::from_value::<TuiKeymap>(json!({
+            "editor": { "move_left": configured }
+        }))
+        .unwrap();
+        let runtime = RuntimeKeymap::from_config(&config).unwrap();
+        assert_eq!(
+            super::user_bindings(&runtime.chat.toggle_recent_model),
+            Vec::new()
+        );
+    }
+    for (configured, expected) in [
+        (json!("f12"), Some("f12")),
+        (json!("ctrl-x m"), Some("⌃x m")),
+        (json!([]), None),
+    ] {
+        let config = serde_json::from_value::<TuiKeymap>(json!({
+            "chat": { "toggle_recent_model": configured }
+        }))
+        .unwrap();
+        let runtime = RuntimeKeymap::from_config(&config).unwrap();
+        assert_eq!(
+            runtime
+                .primary_hint(super::KeymapContext::Chat, "toggle_recent_model")
+                .map(crate::key_hint::ShortcutHint::display_label),
+            expected.map(str::to_string),
+        );
+    }
+    let config = serde_json::from_value::<TuiKeymap>(json!({
+        "chat": { "toggle_recent_model": "ctrl-j" }
+    }))
+    .unwrap();
+    assert!(
+        RuntimeKeymap::from_config(&config)
+            .unwrap_err()
+            .contains("editor.insert_newline")
+    );
+}
+
+#[test]
 fn conflicting_contexts_report_the_first_conflict_in_validation_order() {
     let contexts = [
         ("editor", "insert_newline", "yank"),

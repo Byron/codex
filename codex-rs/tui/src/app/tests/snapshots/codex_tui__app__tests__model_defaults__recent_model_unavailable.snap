@@ -1,0 +1,5 @@
+---
+source: tui/src/app/tests/model_defaults_tests.rs
+expression: next_history_message(&mut events)
+---
+• Model gpt-6.1-sol is unavailable. Choose a model with /model.
