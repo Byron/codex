@@ -10,8 +10,7 @@
 //! current model preset's default, and it walks only efforts advertised by the
 //! active model. Unsupported efforts anchor to the model default, or the first
 //! advertised effort when the default is absent, before stepping through the
-//! advertised order. Raising into Ultra requires the explicit
-//! advanced-reasoning picker.
+//! advertised order, including Max and Ultra when supported.
 
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::openai_models::ModelPreset;
@@ -115,21 +114,6 @@ impl ChatWidget {
             self.add_info_message(direction.bound_message(&current_effort), /*hint*/ None);
             return true;
         };
-
-        if direction == ReasoningShortcutDirection::Raise
-            && next_effort == ReasoningEffortConfig::Ultra
-        {
-            let model_path = if current_model.starts_with("codex-auto-") {
-                current_model
-            } else {
-                format!("All models → {current_model}")
-            };
-            self.add_info_message(
-                format!("Ultra is available under /model → {model_path} → More reasoning…"),
-                /*hint*/ None,
-            );
-            return true;
-        }
 
         if self.collaboration_modes_enabled() && self.active_mode_kind() == ModeKind::Plan {
             let warning = self.ultra_reasoning_concurrency_warning(&next_effort);
