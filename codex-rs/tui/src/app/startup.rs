@@ -1507,7 +1507,7 @@ See the Codex keymap documentation for supported actions and examples."
                     }
                     Some(event) = app.saved_openings.next_event(&mut app_event_rx) => {
                         let switch_backend = match &event {
-                            AppEvent::ChooseNewSessionCheckout { name } | AppEvent::NewSession { name }
+                            AppEvent::NewSession { name }
                                 if multi_backend => app.other_new_session_backend(&backends).await
                                     .map(|owner| (owner, NewBackendSession::Fresh { name: name.clone() })),
                             AppEvent::CycleNewConversationBackend => {

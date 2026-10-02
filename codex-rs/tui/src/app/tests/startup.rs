@@ -2189,7 +2189,7 @@ async fn cloud_switch_wait_applies_navigation_before_polling_terminal_input() ->
 
     for navigation in [
         AppEvent::CycleNewConversationBackend,
-        AppEvent::ChooseNewSessionCheckout { name: None },
+        AppEvent::NewSession { name: None },
     ] {
         assert!(app.can_read_terminal_after_thread_switch(&tui, &events));
         app.app_event_tx.send(navigation);

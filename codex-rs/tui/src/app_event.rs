@@ -657,11 +657,6 @@ pub(crate) enum AppEvent {
         name: Option<String>,
     },
 
-    /// Resolve the /new host before offering choices about the displayed checkout.
-    ChooseNewSessionCheckout {
-        name: Option<String>,
-    },
-
     /// Start on the current worktree's host, ignoring the saved new-thread host.
     NewSessionInCurrentWorktree {
         name: Option<String>,

@@ -254,14 +254,7 @@ impl App {
             }
             AppEvent::PluginMentionsLoaded { ref cwd, .. }
                 if cwds_differ(cwd, self.config.cwd.as_path()) => {}
-            AppEvent::ChooseNewSessionCheckout { name }
-                if self.chat_widget.managed_worktree_available() =>
-            {
-                self.chat_widget
-                    .open_session_checkout_picker(crate::app_event::ManagedWorktreeMode::New, name);
-            }
-            AppEvent::ChooseNewSessionCheckout { name }
-            | AppEvent::NewSession { name }
+            AppEvent::NewSession { name }
             | AppEvent::NewSessionInCurrentWorktree { name } => {
                 self.start_fresh_session(
                     tui, app_server, /*session_start_source*/ None,
