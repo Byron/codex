@@ -1,0 +1,5 @@
+---
+source: tui/src/chatwidget/tests/model_shortcuts_tests.rs
+expression: lines_to_single_string(&drain_insert_history(&mut events).concat())
+---
+• Model switching is unavailable until ordinary usage recovers.

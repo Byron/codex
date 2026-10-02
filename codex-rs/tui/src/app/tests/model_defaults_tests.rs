@@ -222,3 +222,149 @@ async fn model_default_saves_report_server_outcomes_and_target_server_profile() 
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn recent_model_shortcut_restores_choices_across_restarts_without_saving_defaults()
+-> Result<()> {
+    for mode in [ModeKind::Default, ModeKind::Plan] {
+        let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+        app.config.model = Some("gpt-5.5".into());
+        app.config.model_reasoning_effort = Some(ReasoningEffortConfig::High);
+        app.config.plan_mode_reasoning_effort = Some(ReasoningEffortConfig::High);
+        let config_path = app.local_settings.codex_home.join("config.toml");
+        let original = "model = 'gpt-5.5'\nmodel_reasoning_effort = 'high'\n";
+        std::fs::write(&config_path, original)?;
+        let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+        let started = server.start_thread(&app.config).await?;
+        let thread_id = started.session.thread_id;
+        app.enqueue_primary_thread_session(started.session, started.turns)
+            .await?;
+        app.chat_widget
+            .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+        if mode == ModeKind::Plan {
+            let mask = collaboration_modes::plan_mask(app.model_catalog.as_ref()).unwrap();
+            app.chat_widget.set_collaboration_mask(mask);
+            app.chat_widget
+                .set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::High));
+        }
+        for preset in &mut Arc::make_mut(&mut app.model_catalog).models {
+            if ["gpt-6.1-sol", "gpt-5.5", "gpt-5.6-terra"].contains(&preset.model.as_str()) {
+                preset.show_in_picker = true;
+            }
+        }
+        let preset = Arc::make_mut(&mut app.model_catalog)
+            .models
+            .iter_mut()
+            .find(|preset| preset.model == "gpt-5.6-terra")
+            .unwrap();
+        preset.supported_reasoning_efforts.push(
+            codex_protocol::openai_models::ReasoningEffortPreset {
+                effort: ReasoningEffortConfig::Ultra,
+                description: "Ultra".into(),
+            },
+        );
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        while events.try_recv().is_ok() {}
+        Box::pin(app.handle_event(&mut tui, &mut server, AppEvent::ToggleRecentModel)).await?;
+        if mode == ModeKind::Default {
+            insta::assert_snapshot!(
+                "recent_model_missing_alternative",
+                next_history_message(&mut events)
+            );
+        }
+        for (manual, model, effort) in [
+            (true, "gpt-5.6-terra", ReasoningEffortConfig::Ultra),
+            (false, "gpt-5.5", ReasoningEffortConfig::High),
+            (false, "gpt-5.6-terra", ReasoningEffortConfig::Ultra),
+            (true, "gpt-6.1-sol", ReasoningEffortConfig::Low),
+            (false, "gpt-5.6-terra", ReasoningEffortConfig::Ultra),
+            (false, "gpt-6.1-sol", ReasoningEffortConfig::Low),
+        ] {
+            while events.try_recv().is_ok() {}
+            let event = if manual {
+                AppEvent::SelectSessionModel {
+                    model: model.into(),
+                    effort: Some(effort.clone()),
+                }
+            } else {
+                app.chat_widget
+                    .handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT));
+                let event = events.try_recv().expect("model shortcut event");
+                assert_matches!(event, AppEvent::ToggleRecentModel);
+                event
+            };
+            Box::pin(app.handle_event(&mut tui, &mut server, event)).await?;
+            let settings = next_thread_settings_updated(&mut server, thread_id).await;
+            assert_eq!(
+                (
+                    settings.thread_settings.model.as_str(),
+                    settings.thread_settings.effort.clone(),
+                    settings.thread_settings.collaboration_mode.mode
+                ),
+                (model, Some(effort.clone()), mode),
+            );
+            app.enqueue_thread_notification(
+                thread_id,
+                ServerNotification::ThreadSettingsUpdated(settings),
+            )
+            .await?;
+            assert_eq!(
+                (
+                    app.chat_widget.current_model(),
+                    app.chat_widget.current_reasoning_effort()
+                ),
+                (model, Some(effort)),
+            );
+            assert_eq!(std::fs::read(&config_path)?, original.as_bytes());
+            if !manual && model == "gpt-5.5" && mode == ModeKind::Default {
+                insta::assert_snapshot!(
+                    "recent_model_confirmation",
+                    next_history_message(&mut events)
+                );
+            }
+            // Reload the on-disk pair before every toggle, as a new client would.
+            app.recent_models = crate::app::recent_models::RecentModels::load(
+                app.local_settings.codex_home.as_path(),
+            );
+        }
+        let saved =
+            crate::app::recent_models::RecentModels::load(app.local_settings.codex_home.as_path());
+        let fallback = app.chat_widget.effective_collaboration_mode().with_updates(
+            Some("untracked-fallback".into()),
+            /*effort*/ None,
+            /*developer_instructions*/ None,
+        );
+        app.chat_widget.finish_backend_banner_fallback(fallback);
+        Box::pin(app.handle_event(&mut tui, &mut server, AppEvent::ToggleRecentModel)).await?;
+        assert_eq!(app.chat_widget.current_model(), "gpt-6.1-sol");
+        assert_eq!(app.recent_models, saved);
+        let preset = Arc::make_mut(&mut app.model_catalog)
+            .models
+            .iter_mut()
+            .find(|preset| preset.model == "gpt-5.6-terra")
+            .unwrap();
+        preset
+            .supported_reasoning_efforts
+            .retain(|option| option.effort != ReasoningEffortConfig::Ultra);
+        let fallback_effort = preset.default_reasoning_effort.clone();
+        Box::pin(app.handle_event(&mut tui, &mut server, AppEvent::ToggleRecentModel)).await?;
+        assert_eq!(
+            app.chat_widget.current_reasoning_effort(),
+            Some(fallback_effort)
+        );
+        Arc::make_mut(&mut app.model_catalog)
+            .models
+            .retain(|preset| preset.model != "gpt-6.1-sol");
+        while events.try_recv().is_ok() {}
+        Box::pin(app.handle_event(&mut tui, &mut server, AppEvent::ToggleRecentModel)).await?;
+        assert_eq!(app.chat_widget.current_model(), "gpt-5.6-terra");
+        if mode == ModeKind::Default {
+            insta::assert_snapshot!(
+                "recent_model_unavailable",
+                next_history_message(&mut events)
+            );
+        }
+        server.shutdown().await?;
+    }
+    Ok(())
+}

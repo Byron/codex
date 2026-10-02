@@ -888,6 +888,9 @@ See the Codex keymap documentation for supported actions and examples."
             config_notification_test_generation: 0,
             config_notification_test_pending: None,
             model_catalog,
+            recent_models: super::recent_models::RecentModels::load(
+                local_settings.codex_home.as_path(),
+            ),
             session_telemetry: session_telemetry.clone(),
             app_event_tx,
             chat_widget,
