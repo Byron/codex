@@ -26,6 +26,7 @@ expression: text
   tab  Send message
   ⌥,   Less reasoning
   ⌥.   More reasoning
+  ⌥m   Switch recent model
   f4   Inspect activity
   ⌃c   Quit
 

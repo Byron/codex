@@ -120,6 +120,7 @@ impl super::ChatComposer {
                 history_search: self.footer.history_search_key,
                 reasoning_down: self.footer.reasoning_down_key,
                 reasoning_up: self.footer.reasoning_up_key,
+                toggle_recent_model: self.footer.toggle_recent_model_key,
                 toggle_voice: self
                     .footer
                     .toggle_voice_key
@@ -373,6 +374,7 @@ pub(super) struct FooterState {
     pub(super) history_search_key: Option<ShortcutHint>,
     pub(super) reasoning_down_key: Option<ShortcutHint>,
     pub(super) reasoning_up_key: Option<ShortcutHint>,
+    pub(super) toggle_recent_model_key: Option<ShortcutHint>,
     pub(super) toggle_voice_key: Option<ShortcutHint>,
 }
 
