@@ -326,6 +326,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod model_command;
 mod model_popup_state;
 mod model_popups;
+mod model_shortcuts;
 mod notifications;
 pub(crate) mod quick_dials;
 mod session_model_selection;

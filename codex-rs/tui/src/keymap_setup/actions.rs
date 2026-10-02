@@ -130,6 +130,7 @@ define_keymap_actions! {
         interrupt_turn => "Interrupt the active turn.",
         decrease_reasoning_effort => "Decrease reasoning effort.",
         increase_reasoning_effort => "Increase reasoning effort.",
+        toggle_recent_model => "Switch between recent models.",
         previous_permission_mode => "Switch to the previous available permission mode.",
         next_permission_mode => "Switch to the next available permission mode.",
         edit_queued_message => "Move forward through questions, then edit the last queued message.",

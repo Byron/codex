@@ -162,6 +162,23 @@ impl App {
             }
             event => (event, None),
         };
+        let remembers_model_choice = matches!(
+            &event,
+            AppEvent::UpdateModel(_)
+                | AppEvent::UpdateReasoningEffort(_)
+                | AppEvent::UpdatePlanModeReasoningEffort(_)
+                | AppEvent::SelectSessionModel { .. }
+                | AppEvent::ApplyAdvancedReasoning { .. }
+        ) || matches!(
+            &event,
+            AppEvent::SubmitThreadOp {
+                thread_id,
+                op: AppCommand::OverrideTurnContext { collaboration_mode: Some(_), .. },
+            } if self.chat_widget.thread_id() == Some(*thread_id)
+        );
+        if remembers_model_choice {
+            self.remember_current_model_if_known();
+        }
         match event {
             AppEvent::OpenDaemonMenu => self.open_daemon_menu(),
             AppEvent::ConfirmDaemonRestart => self.confirm_daemon_restart(),
@@ -2616,6 +2633,9 @@ impl App {
                     self.chat_widget.recall_quick_dial(slot);
                 }
             }
+            AppEvent::ToggleRecentModel => {
+                Box::pin(self.toggle_recent_model(app_server)).await;
+            }
             AppEvent::CyberModelAutoReviewNotice => {
                 self.chat_widget.add_warning_message(
                     "Cyber models default to \"Approve for me\" for safety reasons.".to_string(),
@@ -3601,6 +3621,9 @@ impl App {
                     self.insert_history_cell(tui, Box::new(cell));
                 }
             }
+        }
+        if remembers_model_choice {
+            self.remember_current_model();
         }
         if let Some(model) = sparkle_model {
             self.chat_widget

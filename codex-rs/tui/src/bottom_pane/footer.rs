@@ -123,6 +123,7 @@ pub(crate) struct FooterKeyHints {
     pub(crate) history_search: Option<ShortcutHint>,
     pub(crate) reasoning_down: Option<ShortcutHint>,
     pub(crate) reasoning_up: Option<ShortcutHint>,
+    pub(crate) toggle_recent_model: Option<ShortcutHint>,
     pub(crate) toggle_voice: Option<ShortcutHint>,
 }
 
@@ -142,6 +143,7 @@ impl FooterKeyHints {
             history_search: Some(key_hint::ctrl(KeyCode::Char('r')).into()),
             reasoning_down: Some(key_hint::alt(KeyCode::Char(',')).into()),
             reasoning_up: Some(key_hint::alt(KeyCode::Char('.')).into()),
+            toggle_recent_model: Some(key_hint::alt(KeyCode::Char('m')).into()),
             toggle_voice: Some(key_hint::plain(KeyCode::F(8)).into()),
         }
     }

@@ -143,6 +143,8 @@ pub(crate) struct ChatKeymap {
     pub(crate) decrease_reasoning_effort: Vec<KeyBinding>,
     /// Increase the active reasoning effort.
     pub(crate) increase_reasoning_effort: Vec<KeyBinding>,
+    /// Switch between the two most recently selected models.
+    pub(crate) toggle_recent_model: Vec<KeyBinding>,
     /// Switch to the previous available permission mode.
     pub(crate) previous_permission_mode: Vec<KeyBinding>,
     /// Switch to the next available permission mode.
@@ -779,6 +781,14 @@ impl RuntimeKeymap {
                         && binding.chord.prefix.parts() == key_hint::plain(KeyCode::F(8)).parts()
                 }));
 
+        let recent_model_default_is_shadowed = keymap.chat.toggle_recent_model.is_none()
+            && (configured_main_surface_alias_is_used(keymap, "alt-m")
+                || configured_context_alias_is_used(&keymap.vim_search, "alt-m")
+                || chords.bindings.iter().any(|binding| {
+                    binding.action.context.overlaps(KeymapContext::Chat)
+                        && binding.chord.prefix.parts() == key_hint::alt(KeyCode::Char('m')).parts()
+                }));
+
         let mut chat = ChatKeymap {
             open_presets: resolve_local!(keymap, defaults, chat, open_presets),
             toggle_voice: if voice_toggle_default_is_shadowed {
@@ -815,6 +825,11 @@ impl RuntimeKeymap {
                 &defaults.chat.increase_reasoning_effort,
                 "tui.keymap.chat.increase_reasoning_effort",
             )?,
+            toggle_recent_model: if recent_model_default_is_shadowed {
+                Vec::new()
+            } else {
+                resolve_local!(keymap, defaults, chat, toggle_recent_model)
+            },
             previous_permission_mode: resolve_local!(
                 keymap,
                 defaults,
@@ -1701,6 +1716,7 @@ impl RuntimeKeymap {
                     alt(KeyCode::Char('.')),
                     shift(KeyCode::Up)
                 ],
+                toggle_recent_model: default_bindings![alt(KeyCode::Char('m'))],
                 previous_permission_mode: default_bindings![],
                 next_permission_mode: default_bindings![],
                 edit_queued_message: default_bindings![shift(KeyCode::Left), alt(KeyCode::Up)],
@@ -2080,6 +2096,10 @@ impl RuntimeKeymap {
                 self.chat.increase_reasoning_effort.as_slice(),
             ),
             (
+                "chat.toggle_recent_model",
+                self.chat.toggle_recent_model.as_slice(),
+            ),
+            (
                 "chat.previous_permission_mode",
                 self.chat.previous_permission_mode.as_slice(),
             ),
@@ -2240,6 +2260,10 @@ impl RuntimeKeymap {
                 (
                     "chat.increase_reasoning_effort",
                     self.chat.increase_reasoning_effort.as_slice(),
+                ),
+                (
+                    "chat.toggle_recent_model",
+                    self.chat.toggle_recent_model.as_slice(),
                 ),
                 (
                     "chat.previous_permission_mode",
