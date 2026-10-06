@@ -251,18 +251,29 @@ impl ChatWidget {
     }
 
     pub(super) fn open_plan_implementation_prompt(&mut self) {
-        let default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
+        let view_id = plan_implementation::PLAN_IMPLEMENTATION_VIEW_ID;
+        let selected_index = self.bottom_pane.selected_index_for_present_view(view_id);
+        let mut default_mask = collaboration_modes::default_mode_mask(self.model_catalog.as_ref());
+        if let Some(mask) = default_mask.as_mut() {
+            mask.model = Some(self.current_model().to_string());
+        }
         let context_usage_label = self.plan_implementation_context_usage_label();
-
-        self.bottom_pane
-            .show_selection_view(plan_implementation::selection_view_params(
-                default_mask,
-                self.transcript.latest_proposed_plan_markdown.as_deref(),
-                context_usage_label.as_deref(),
-            ));
-        self.notify(Notification::PlanModePrompt {
-            title: PLAN_IMPLEMENTATION_TITLE.to_string(),
-        });
+        let mut params = plan_implementation::selection_view_params(
+            default_mask,
+            self.transcript.latest_proposed_plan_markdown.as_deref(),
+            context_usage_label.as_deref(),
+        );
+        params.subtitle = Some(format!("Model: {}", self.model_display_name()));
+        params.initial_selected_idx = selected_index;
+        if selected_index.is_some() {
+            self.bottom_pane
+                .replace_selection_view_if_present(view_id, params);
+        } else {
+            self.bottom_pane.show_selection_view(params);
+            self.notify(Notification::PlanModePrompt {
+                title: PLAN_IMPLEMENTATION_TITLE.to_string(),
+            });
+        }
     }
 
     /// Returns a context-used label for the plan implementation prompt.

@@ -7,6 +7,7 @@ use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 
 pub(super) const PLAN_IMPLEMENTATION_TITLE: &str = "Implement this plan?";
+pub(super) const PLAN_IMPLEMENTATION_VIEW_ID: &str = "plan-implementation";
 const PLAN_IMPLEMENTATION_YES: &str = "Yes, implement this plan";
 const PLAN_IMPLEMENTATION_CLEAR_CONTEXT: &str = "Yes, clear context and implement";
 const PLAN_IMPLEMENTATION_NO: &str = "No, stay in Plan mode";
@@ -76,6 +77,7 @@ pub(super) fn selection_view_params(
     );
 
     SelectionViewParams {
+        view_id: Some(PLAN_IMPLEMENTATION_VIEW_ID),
         title: Some(PLAN_IMPLEMENTATION_TITLE.to_string()),
         subtitle: None,
         footer_hint: Some(standard_popup_hint_line()),
