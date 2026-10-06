@@ -2,7 +2,6 @@
 source: tui/src/app/owned_transcript_input_tests.rs
 expression: scrolled
 ---
-  • Plan step 29
   • Plan step 30
   • Plan step 31
   • Plan step 32
@@ -19,6 +18,7 @@ expression: scrolled
 
 
   Implement this plan?
+  Model: GPT-5.6-Sol
 
 
 › 1. Yes, implement this plan          Switch to Default and start coding
