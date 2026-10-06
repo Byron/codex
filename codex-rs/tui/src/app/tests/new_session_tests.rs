@@ -7,6 +7,71 @@ use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn clear_plan_context_preserves_selected_model_without_changing_new_chat_defaults()
+-> Result<()> {
+    let (mut app, _events, _ops) = make_test_app_with_channels().await;
+    let config_path = app.config.codex_home.join("config.toml");
+    let original = "model = 'gpt-5.5'\nmodel_reasoning_effort = 'high'\n";
+    std::fs::write(&config_path, original)?;
+    let (mut server, requests, proxy) = start_recording_app_server_with_history(
+        &app.config,
+        HistoryCapabilities::Current,
+        /*blocked_thread_list*/ None,
+        /*failed_thread_name*/ None,
+        crate::app_server_session::ThreadParamsMode::Embedded,
+        LoaderOverrides::default(),
+    )
+    .await?;
+    let started = server.start_thread(&app.config).await?;
+    let previous_thread = started.session.thread_id;
+    app.enqueue_primary_thread_session(started.session, started.turns)
+        .await?;
+    app.chat_widget.set_collaboration_mask(
+        crate::collaboration_modes::plan_mask(app.model_catalog.as_ref()).unwrap(),
+    );
+    app.chat_widget.set_model("gpt-5.6-terra");
+    app.chat_widget
+        .set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Low));
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+
+    app.handle_event(
+        &mut tui,
+        &mut server,
+        AppEvent::ClearUiAndSubmitUserMessage {
+            text: "Implement the approved plan.".into(),
+        },
+    )
+    .await?;
+
+    let starts = recorded_params(&requests, "thread/start");
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts[1]["model"], "gpt-5.6-terra");
+    assert_eq!(starts[1]["config"]["model_reasoning_effort"], "low");
+    assert_ne!(app.chat_widget.thread_id(), Some(previous_thread));
+    assert_eq!(app.chat_widget.current_model(), "gpt-5.6-terra");
+    assert_eq!(
+        app.chat_widget.effective_collaboration_mode().mode,
+        ModeKind::Default
+    );
+    assert_eq!(std::fs::read_to_string(&config_path)?, original);
+
+    app.start_fresh_session(
+        &mut tui,
+        &mut server,
+        /*session_start_source*/ None,
+        /*initial_user_message*/ None,
+        /*new_thread_name*/ None,
+    )
+    .await;
+    let starts = recorded_params(&requests, "thread/start");
+    assert_eq!(starts[2]["model"], "gpt-5.5");
+    assert_eq!(starts[2]["config"]["model_reasoning_effort"], "high");
+    server.shutdown().await?;
+    proxy.await??;
+    Ok(())
+}
+
+#[tokio::test]
 async fn new_sessions_preserve_yolo_launch_and_later_permission_choices() -> Result<()> {
     let (mut app, _events, _ops) = make_test_app_with_channels().await;
     app.harness_overrides.approval_policy = Some(AskForApproval::Never.to_core());

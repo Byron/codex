@@ -106,6 +106,7 @@ async fn plan_implementation_popup_context_usage_snapshot() {
 async fn plan_implementation_popup_yes_emits_submit_message_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.open_plan_implementation_prompt();
+    chat.set_model("gpt-5.6-terra");
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
@@ -123,6 +124,7 @@ async fn plan_implementation_popup_yes_emits_submit_message_event() {
         plan_implementation::PLAN_IMPLEMENTATION_CODING_MESSAGE
     );
     assert_eq!(collaboration_mode.mode, Some(ModeKind::Default));
+    assert_eq!(collaboration_mode.model.as_deref(), Some("gpt-5.6-terra"));
 }
 
 #[tokio::test]

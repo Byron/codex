@@ -1,4 +1,4 @@
-//! Model switching uses the same main-surface input ownership as reasoning shortcuts.
+//! Model switching is available in the composer and the plan implementation prompt.
 
 use super::ChatWidget;
 use super::PARENT_OWNED_INPUT_MESSAGE;
@@ -9,7 +9,14 @@ use crossterm::event::KeyEvent;
 impl ChatWidget {
     pub(super) fn handle_model_shortcut(&mut self, key_event: KeyEvent) -> bool {
         if !self.chat_keymap.toggle_recent_model.is_pressed(key_event)
-            || !self.bottom_pane.no_modal_or_popup_active()
+            || (!self.bottom_pane.no_modal_or_popup_active()
+                && (self.bottom_pane.active_view_id()
+                    != Some(super::plan_implementation::PLAN_IMPLEMENTATION_VIEW_ID)
+                    || self
+                        .bottom_pane
+                        .list_keymap()
+                        .action_for(key_event)
+                        .is_some()))
         {
             return false;
         }

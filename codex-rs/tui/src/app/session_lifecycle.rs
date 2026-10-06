@@ -1006,6 +1006,11 @@ impl App {
             &self.cli_kv_overrides,
             &self.harness_overrides,
         );
+        // Seeded fresh sessions hand off an approved plan using the selected model and effort.
+        if initial_user_message.is_some() {
+            config.model = Some(self.chat_widget.current_model().to_string());
+            config.model_reasoning_effort = self.chat_widget.current_reasoning_effort();
+        }
         match app_server
             .start_thread_with_session_start_source(
                 &self.local_settings,

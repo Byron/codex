@@ -490,6 +490,13 @@ impl ChatWidget {
         self.refresh_model_display();
         self.refresh_status_line();
         self.refresh_open_model_picker();
+        if self
+            .bottom_pane
+            .selected_index_for_present_view(plan_implementation::PLAN_IMPLEMENTATION_VIEW_ID)
+            .is_some()
+        {
+            self.open_plan_implementation_prompt();
+        }
     }
 
     fn apply_thread_settings(&mut self, mut settings: ThreadSettings) {

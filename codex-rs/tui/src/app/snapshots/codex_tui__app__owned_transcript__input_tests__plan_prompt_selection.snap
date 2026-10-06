@@ -5,6 +5,7 @@ expression: "format!(\"{selection}\\n\\n{}\", render_bottom_popup(&app.chat_widg
 ······^^^^······································································
 
   Implement this plan?
+  Model: GPT-5.6-Sol
 
 
 › 1. Yes, implement this plan          Switch to Default and start coding

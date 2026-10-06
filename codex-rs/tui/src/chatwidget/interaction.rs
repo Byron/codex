@@ -64,6 +64,12 @@ impl ChatWidget {
         if self.handle_question_key(key_event) {
             return KeyEventAction::None;
         }
+        if self.bottom_pane.active_view_id()
+            == Some(plan_implementation::PLAN_IMPLEMENTATION_VIEW_ID)
+            && self.handle_model_shortcut(key_event)
+        {
+            return KeyEventAction::None;
+        }
         if self.bottom_pane.has_active_view()
             && !matches!(
                 key_event,

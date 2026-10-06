@@ -3,6 +3,7 @@ source: tui/src/chatwidget/tests/plan_mode.rs
 expression: popup
 ---
   Implement this plan?
+  Model: gpt-5
 
 
 › 1. Yes, implement this plan          Switch to Default and start coding
