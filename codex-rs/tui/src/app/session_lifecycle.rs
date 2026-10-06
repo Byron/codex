@@ -1244,7 +1244,11 @@ impl App {
         // history. If an initial message is provided, `enqueue_primary_thread_session` suppresses it
         // until the new session is configured and any replayed turns have been rendered.
         match self
-            .prepare_fresh_session(app_server, session_start_source)
+            .prepare_fresh_session(
+                app_server,
+                session_start_source,
+                initial_user_message.is_some(),
+            )
             .await
         {
             Ok(prepared) => {
@@ -1272,13 +1276,19 @@ impl App {
         &mut self,
         app_server: &mut AppServerSession,
         session_start_source: Option<ThreadStartSource>,
+        preserve_selected_model: bool,
     ) -> Result<PreparedFreshSession> {
-        let (config, local_settings) =
+        let (mut config, local_settings) =
             crate::boxed_future!(self.load_new_session_config(app_server))
                 .await
                 .map_err(|err| {
                     color_eyre::eyre::eyre!("Failed to read new session defaults: {err}")
                 })?;
+        // Approved plan handoffs keep the selected model and effort.
+        if preserve_selected_model {
+            config.model = Some(self.chat_widget.current_model().to_string());
+            config.model_reasoning_effort = self.chat_widget.current_reasoning_effort();
+        }
         let started = crate::boxed_future!(app_server.start_thread_with_session_start_source(
             &self.local_settings,
             &config,
@@ -1308,7 +1318,11 @@ impl App {
             return Ok(());
         }
         let prepared = match self
-            .prepare_fresh_session(app_server, Some(ThreadStartSource::Clear))
+            .prepare_fresh_session(
+                app_server,
+                Some(ThreadStartSource::Clear),
+                /*preserve_selected_model*/ true,
+            )
             .await
         {
             Ok(prepared) => prepared,
