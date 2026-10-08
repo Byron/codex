@@ -22,6 +22,17 @@ fn feature_overrides_allow_daemon_without_allowing_arbitrary_config() {
         ("tui={fullscreen_transcript=true}", true),
         ("tui={fullscreen_transcript='true'}", false),
         ("tui={fullscreen_transcript=true,animations=false}", false),
+        ("tui.terminal_status='rustty'", true),
+        ("tui.terminal_status='auto'", false),
+        ("tui.terminal_status=true", false),
+        ("tui={terminal_status='rustty'}", true),
+        (
+            "tui={fullscreen_transcript=true,terminal_status='rustty'}",
+            true,
+        ),
+        ("tui={terminal_status='rustty',animations=false}", false),
+        ("tui={terminal_status=true}", false),
+        ("tui={}", false),
         ("features={}", false),
         ("model='test'", false),
     ] {

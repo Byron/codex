@@ -902,6 +902,13 @@ pub enum BuiltinStatusLine {
     Default,
 }
 
+/// Opt-in private terminal status protocol; independent of desktop notifications.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStatus {
+    Rustty,
+}
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -1035,6 +1042,11 @@ pub struct Tui {
     /// message when blocked on the user.
     #[serde(default)]
     pub terminal_title: Option<Vec<String>>,
+
+    /// Emit structured pane-local status using Rustty's private OSC 777 extension.
+    /// Disabled when omitted. This does not enable notifications or agent actions.
+    #[serde(default)]
+    pub terminal_status: Option<TerminalStatus>,
 
     /// Syntax highlighting theme name (kebab-case).
     ///

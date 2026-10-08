@@ -544,6 +544,7 @@ pub(crate) struct SidebarFork {
 pub(crate) struct AppServerStartedThread {
     pub(crate) session: ThreadSessionState,
     pub(crate) turns: Vec<Turn>,
+    pub(crate) status: codex_app_server_protocol::ThreadStatus,
     pub(crate) blocks_direct_input: bool,
     pub(crate) task_tools_available: bool,
 }
@@ -2940,6 +2941,7 @@ async fn started_thread_from_start_response(
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
+        status: response.thread.status,
         blocks_direct_input,
         task_tools_available: false,
     })
@@ -2961,6 +2963,7 @@ async fn started_thread_from_resume_response(
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
+        status: response.thread.status,
         blocks_direct_input,
         task_tools_available: false,
     })
@@ -2984,6 +2987,7 @@ async fn started_thread_from_fork_response(
     Ok(AppServerStartedThread {
         session,
         turns: response.thread.turns,
+        status: response.thread.status,
         blocks_direct_input,
         task_tools_available: false,
     })

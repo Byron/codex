@@ -1173,6 +1173,7 @@ See the Codex keymap documentation for supported actions and examples."
         let initial_session_started_at = Instant::now();
         if let Some(started) = initial_started_thread {
             let thread_id = started.session.thread_id;
+            let terminal_status = started.status.clone();
             app.chat_widget
                 .set_task_mentions_enabled(started.task_tools_available);
             if started.blocks_direct_input {
@@ -1208,6 +1209,8 @@ See the Codex keymap documentation for supported actions and examples."
                 app.chat_widget
                     .add_info_message(notice.to_string(), /*hint*/ None);
             }
+            app.set_terminal_thread_status(thread_id, &terminal_status)
+                .await;
             if !read_only_thread
                 && should_prompt_for_paused_goal_after_startup_resume
                 && let Err(err) = startup_draft
@@ -1377,6 +1380,7 @@ See the Codex keymap documentation for supported actions and examples."
                 {
                     app.begin_reconnect();
                 }
+                app.sync_terminal_status(tui).await;
                 // Reconnect can dismiss an overlay from the server-event path.
                 if app.overlay.is_none() {
                     if !tui.is_owned_screen() && tui.is_alt_screen_active() {
@@ -1669,7 +1673,11 @@ See the Codex keymap documentation for supported actions and examples."
                                     if app.reconnect.offline && app.pending_startup_thread_start {
                                         reconnect = None;
                                     } else if !app.pending_startup_thread_start {
-                                        app.begin_reconnect();
+                                        if !app.begin_reconnect() {
+                                            for channel in app.thread_event_channels.values() {
+                                                channel.store.lock().await.terminal_status.uncertain();
+                                            }
+                                        }
                                     }
                                 }
                                 tracing::warn!("app-server event stream closed");
@@ -1842,6 +1850,8 @@ See the Codex keymap documentation for supported actions and examples."
         let archive_warnings = app
             .finish_pending_archives(tokio::time::Instant::now() + Duration::from_secs(/*secs*/ 5))
             .await;
+        // Finish the lifecycle on the same foreground path that emitted snapshots.
+        tui.end_terminal_status();
         if let Err(err) = backends.shutdown().await {
             tracing::warn!(error = %err, "failed to shut down embedded app server");
         }

@@ -73,6 +73,14 @@ impl App {
             }
         };
 
+        if let Some(channel) = self.thread_event_channels.get(&thread_id) {
+            channel.store.lock().await.terminal_status.set_goal_paused(
+                response
+                    .goal
+                    .as_ref()
+                    .is_some_and(|goal| goal.status == ThreadGoalStatus::Paused),
+            );
+        }
         let Some(goal) = response.goal else {
             return;
         };

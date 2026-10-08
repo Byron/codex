@@ -326,6 +326,7 @@ async fn prepared_resume_cannot_activate_through_another_backend() -> Result<()>
         thread: AppServerStartedThread {
             session: test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf()),
             turns: Vec::new(),
+            status: codex_app_server_protocol::ThreadStatus::Idle,
             blocks_direct_input: false,
             task_tools_available: true,
         },
@@ -435,6 +436,7 @@ async fn read_only_resume_reconciles_receipts_before_writable_retry() -> Result<
             thread: AppServerStartedThread {
                 session,
                 turns: vec![test_turn("resumed", status, items)],
+                status: codex_app_server_protocol::ThreadStatus::Idle,
                 blocks_direct_input: false,
                 task_tools_available: true,
             },
