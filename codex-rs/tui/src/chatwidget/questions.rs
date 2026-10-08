@@ -22,6 +22,13 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn has_unanswered_async_questions(&self) -> bool {
+        self.bottom_pane
+            .questions
+            .as_ref()
+            .is_some_and(|questions| questions.unanswered_count() > 0)
+    }
+
     pub(super) fn take_question_drafts(&mut self) -> Option<Vec<String>> {
         if matches!(
             self.pending_notification,
@@ -190,5 +197,37 @@ impl ChatWidget {
         }
         self.request_redraw();
         true
+    }
+}
+
+#[cfg(test)]
+mod terminal_status_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn terminal_status_uses_retained_question_resolution() {
+        let (mut chat, _, _, _) =
+            crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
+        assert!(!chat.has_unanswered_async_questions());
+        chat.add_async_questions(
+            "question",
+            &[AsyncUserInputQuestion {
+                title: "Which branch?".into(),
+                options: None,
+            }],
+        );
+        assert!(chat.has_unanswered_async_questions());
+        chat.bottom_pane
+            .question_editor()
+            .resolve_answers(&["question".into()]);
+        assert!(!chat.has_unanswered_async_questions());
+        chat.add_async_questions(
+            "question",
+            &[AsyncUserInputQuestion {
+                title: "Which branch?".into(),
+                options: None,
+            }],
+        );
+        assert!(!chat.has_unanswered_async_questions());
     }
 }

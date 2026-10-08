@@ -430,7 +430,7 @@ impl App {
             .thread_event_channels
             .get(&thread_id)
             .is_some_and(|channel| channel.attachment() == ThreadEventAttachment::ExternalWriter);
-        let (mut session, turns, live_attached) = match prepared {
+        let (mut session, turns, terminal_status, live_attached) = match prepared {
             PreparedAttachment::Live(started) => {
                 if let Some(entry) = self.agent_navigation.get(&thread_id).cloned() {
                     self.upsert_agent_picker_thread(
@@ -444,7 +444,7 @@ impl App {
                 if started.blocks_direct_input {
                     self.agent_navigation.mark_parent_owned(thread_id);
                 }
-                (started.session, started.turns, true)
+                (started.session, started.turns, started.status, true)
             }
             PreparedAttachment::ReplayOnly(thread) => {
                 let mut session = self.session_state_for_thread_read(thread_id, &thread).await;
@@ -464,7 +464,7 @@ impl App {
                 if was_external_writer {
                     app_server.freeze_viewed_receipt(thread_id);
                 }
-                (session, thread.turns, false)
+                (session, thread.turns, thread.status, false)
             }
         };
         let live_attached = live_attached && !closed;
@@ -533,6 +533,7 @@ impl App {
             store.pending_interrupt_turn_id = None;
         }
         store.replay_may_have_output |= replay_may_have_output;
+        store.terminal_status.thread_status(&terminal_status);
         store.merge_recap_progress(recap_progress);
         store.rebase_buffer_after_session_refresh();
         live_attached
@@ -1162,6 +1163,8 @@ impl App {
                 }
                 self.enqueue_primary_thread_session(started.session, started.turns)
                     .await?;
+                self.set_terminal_thread_status(thread_id, &started.status)
+                    .await;
                 self.apply_backend_banner_fallback(app_server).await;
                 if let Some(model) = self.harness_overrides.model.as_deref()
                     && model == self.chat_widget.current_model()
@@ -1561,12 +1564,16 @@ impl App {
         if started.blocks_direct_input {
             self.mark_primary_thread_parent_owned(started.session.thread_id);
         }
+        let thread_id = started.session.thread_id;
+        let terminal_status = started.status;
         self.enqueue_primary_thread_session_with_presentation(
             started.session,
             started.turns,
             presentation,
         )
         .await?;
+        self.set_terminal_thread_status(thread_id, &terminal_status)
+            .await;
         Ok(())
     }
 

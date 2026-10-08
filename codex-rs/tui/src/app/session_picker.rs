@@ -41,6 +41,8 @@ impl App {
         tui: &mut tui::Tui,
         backends: &mut super::backend_sessions::BackendSessions,
     ) -> Result<AppRunControl> {
+        // The nested picker does not pump the displayed thread's events.
+        tui.report_unknown_terminal_status();
         let displayed_session = backends.displayed;
         let displayed_owner = backends.displayed_owner();
         let selection =

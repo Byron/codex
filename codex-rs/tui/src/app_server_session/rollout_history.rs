@@ -102,6 +102,7 @@ impl AppServerSession {
             AppServerStartedThread {
                 session,
                 turns: thread.turns,
+                status: thread.status,
                 blocks_direct_input: false,
                 task_tools_available: false,
             },

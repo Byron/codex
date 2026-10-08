@@ -15,6 +15,7 @@ fn started(model: &str) -> AppServerStartedThread {
         session,
         turns: Vec::new(),
         blocks_direct_input: false,
+        status: codex_app_server_protocol::ThreadStatus::Idle,
         task_tools_available: false,
     }
 }

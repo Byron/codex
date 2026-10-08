@@ -108,6 +108,7 @@ pub(super) struct ThreadEventStore {
     pub(super) active_reasoning_item: Option<codex_app_server_protocol::ItemStartedNotification>,
     // Lifecycle identity must survive bounded replay-buffer eviction.
     pub(super) latest_turn_id: Option<String>,
+    pub(super) terminal_status: super::terminal_status::ThreadStatusReport,
     pub(super) pending_interrupt_turn_id: Option<String>,
     pub(super) input_state: Option<ThreadInputState>,
     pub(super) capacity: usize,
@@ -157,6 +158,7 @@ impl ThreadEventStore {
             evicted_active_turn: None,
             active_reasoning_item: None,
             latest_turn_id: None,
+            terminal_status: Default::default(),
             pending_interrupt_turn_id: None,
             input_state: None,
             capacity,
@@ -199,6 +201,7 @@ impl ThreadEventStore {
 
     pub(super) fn set_turns(&mut self, turns: Vec<Turn>) {
         self.evicted_active_turn = None;
+        self.terminal_status.attach(turns.last());
         if self.active_reasoning_item.as_ref().is_some_and(|started| {
             turns.iter().any(|turn| {
                 (turn.id == started.turn_id && turn.status != TurnStatus::InProgress)
@@ -243,6 +246,7 @@ impl ThreadEventStore {
     }
 
     fn push_notification_inner(&mut self, notification: Cow<'_, ServerNotification>) {
+        self.terminal_status.observe(notification.as_ref());
         let user_item = match notification.as_ref() {
             ServerNotification::ItemStarted(n) => Some((&n.turn_id, &n.item.payload)),
             ServerNotification::ItemCompleted(n) => Some((&n.turn_id, &n.item.payload)),
