@@ -4389,6 +4389,13 @@
         }
       ]
     },
+    "TerminalStatus": {
+      "description": "Opt-in private terminal status protocol; independent of desktop notifications.",
+      "enum": [
+        "rustty"
+      ],
+      "type": "string"
+    },
     "ThreadStoreToml": {
       "oneOf": [
         {
@@ -5011,6 +5018,15 @@
           "format": "uint",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "terminal_status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TerminalStatus"
+            }
+          ],
+          "default": null,
+          "description": "Emit structured pane-local status using Rustty's private OSC 777 extension. Disabled when omitted. This does not enable notifications or agent actions."
         },
         "terminal_title": {
           "default": null,
