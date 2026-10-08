@@ -380,7 +380,7 @@ impl App {
             return Ok(true);
         }
 
-        let (session, turns, live_attached) = match app_server
+        let (session, turns, terminal_status, live_attached) = match app_server
             .resume_thread(
                 &self.local_settings,
                 self.config.clone(),
@@ -401,7 +401,7 @@ impl App {
                 if started.blocks_direct_input {
                     self.agent_navigation.mark_parent_owned(thread_id);
                 }
-                (started.session, started.turns, true)
+                (started.session, started.turns, started.status, true)
             }
             Err(resume_err) => {
                 tracing::warn!(
@@ -454,7 +454,7 @@ impl App {
                 // `thread/read` can seed replay state, but it does not attach the app-server
                 // listener that `thread/resume` establishes, so treat this path as replay-only.
                 session.model.clear();
-                (session, turns, false)
+                (session, turns, thread.status, false)
             }
         };
         self.agents_overview.activity.remove(&thread_id);
@@ -478,6 +478,7 @@ impl App {
         }
         let mut store = channel.store.lock().await;
         store.set_session(session, turns);
+        store.terminal_status.thread_status(&terminal_status);
         store.merge_recap_progress(recap_progress);
         store.rebase_buffer_after_session_refresh();
         Ok(live_attached)
@@ -942,6 +943,8 @@ impl App {
                 let recovery_was_pending = self.chat_widget.hold_rate_limit_recovery();
                 self.enqueue_primary_thread_session(started.session, started.turns)
                     .await?;
+                self.set_terminal_thread_status(thread_id, &started.status)
+                    .await;
                 self.apply_backend_banner_fallback(app_server).await;
                 if let Some(notice) = self.pending_server_version_notice.take() {
                     self.chat_widget.add_server_version_warning(notice);
@@ -1155,12 +1158,16 @@ impl App {
         if started.blocks_direct_input {
             self.mark_primary_thread_parent_owned(started.session.thread_id);
         }
+        let thread_id = started.session.thread_id;
+        let terminal_status = started.status;
         self.enqueue_primary_thread_session_with_presentation(
             started.session,
             started.turns,
             presentation,
         )
         .await?;
+        self.set_terminal_thread_status(thread_id, &terminal_status)
+            .await;
         Ok(())
     }
 

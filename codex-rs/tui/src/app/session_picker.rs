@@ -9,6 +9,8 @@ impl App {
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
     ) -> Result<AppRunControl> {
+        // The nested picker does not pump the displayed thread's events.
+        tui.report_unknown_terminal_status();
         // Keep embedded-server initialization on its own runtime task as well as opening the
         // picker on a fresh event-loop iteration; its auth manager needs more stack headroom.
         let picker_config = self.config.clone();

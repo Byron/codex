@@ -835,6 +835,7 @@ pub struct Config {
     /// The `activity` item spins while working and shows an action-required
     /// message when blocked on the user.
     pub tui_terminal_title: Option<Vec<String>>,
+    pub tui_terminal_status: Option<codex_config::types::TerminalStatus>,
 
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
@@ -4565,6 +4566,7 @@ impl Config {
                 .map(|t| t.status_line_use_colors)
                 .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
+            tui_terminal_status: cfg.tui.as_ref().and_then(|t| t.terminal_status),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
             tui_pet_anchor: cfg

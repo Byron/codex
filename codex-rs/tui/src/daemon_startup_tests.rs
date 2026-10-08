@@ -33,6 +33,17 @@ fn audited_overrides_allow_daemon_without_allowing_arbitrary_config() {
         ("tui={fullscreen_transcript=true}", true),
         ("tui={fullscreen_transcript='true'}", false),
         ("tui={fullscreen_transcript=true,animations=false}", false),
+        ("tui.terminal_status='rustty'", true),
+        ("tui.terminal_status='auto'", false),
+        ("tui.terminal_status=true", false),
+        ("tui={terminal_status='rustty'}", true),
+        (
+            "tui={fullscreen_transcript=true,terminal_status='rustty'}",
+            true,
+        ),
+        ("tui={terminal_status='rustty',animations=false}", false),
+        ("tui={terminal_status=true}", false),
+        ("tui={}", false),
         ("features={}", false),
         ("model='test'", false),
     ] {
@@ -74,6 +85,7 @@ fn monorepo_wrapper_overrides_are_eligible_and_select_only_server_features() {
             "features.multi_agent_mode=true",
             "features.code_mode_host=true",
             "suppress_unstable_features_warning=true",
+            "tui.terminal_status='rustty'",
         ]
         .map(str::to_string)
         .to_vec(),

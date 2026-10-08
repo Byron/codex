@@ -417,10 +417,17 @@ impl App {
             if started.blocks_direct_input {
                 self.agent_navigation.mark_parent_owned(id);
             }
+            let previous_status = if let Some(channel) = self.thread_event_channels.get(&id) {
+                channel.store.lock().await.terminal_status.clone()
+            } else {
+                Default::default()
+            };
             let channel = ThreadEventChannel::new(THREAD_EVENT_CHANNEL_CAPACITY);
             {
                 let mut store = channel.store.lock().await;
+                store.terminal_status = previous_status;
                 store.set_session(started.session, started.turns);
+                store.terminal_status.thread_status(&started.status);
                 store.input_state = input.clone();
             }
             self.thread_event_channels.insert(id, channel);

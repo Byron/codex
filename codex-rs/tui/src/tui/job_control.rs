@@ -43,6 +43,7 @@ pub struct SuspendContext {
     resume_pending: Arc<Mutex<Option<ResumeAction>>>,
     /// Inline viewport cursor row used to place the cursor before yielding during suspend.
     suspend_cursor_y: Arc<AtomicU16>,
+    terminal_status: Option<Arc<Mutex<crate::terminal_status::Reporter>>>,
 }
 
 impl SuspendContext {
@@ -50,7 +51,16 @@ impl SuspendContext {
         Self {
             resume_pending: Arc::new(Mutex::new(None)),
             suspend_cursor_y: Arc::new(AtomicU16::new(0)),
+            terminal_status: None,
         }
+    }
+
+    pub(crate) fn with_terminal_status(
+        mut self,
+        reporter: Arc<Mutex<crate::terminal_status::Reporter>>,
+    ) -> Self {
+        self.terminal_status = Some(reporter);
+        self
     }
 
     /// Capture how to resume, stash cursor position, and temporarily yield during SIGTSTP.
@@ -69,7 +79,22 @@ impl SuspendContext {
         }
         let y = self.suspend_cursor_y.load(Ordering::Relaxed);
         let _ = execute!(stdout(), MoveTo(0, y), Show);
-        suspend_process()?;
+        // This executes while the foreground TUI loop polls input, never in a signal handler.
+        let suspended_snapshot = self.terminal_status.as_ref().and_then(|reporter| {
+            reporter
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .end_for_handoff(&mut stdout().lock())
+        });
+        let suspend_result = suspend_process();
+        // Nested pickers also poll this path, so resume registration before returning to them.
+        if let Some(reporter) = &self.terminal_status {
+            let _ = reporter
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .report(suspended_snapshot, &mut stdout().lock());
+        }
+        suspend_result?;
         super::reapply_raw_mode_after_resume()?;
 
         // The shell writes its job-control status and the resumed command after `fg`, so the

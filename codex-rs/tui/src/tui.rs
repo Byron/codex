@@ -676,6 +676,7 @@ pub struct Tui {
     pub(crate) terminal_app_over_ssh: bool,
     notification_backend: Option<DesktopNotificationBackend>,
     notification_condition: NotificationCondition,
+    terminal_status: std::sync::Arc<std::sync::Mutex<crate::terminal_status::Reporter>>,
     scrollback: ScrollbackStrategy,
     // When false, overlays stay on the inline screen.
     alt_screen_enabled: bool,
@@ -715,6 +716,9 @@ impl Tui {
         enhanced_keys_supported: bool,
         stderr_guard: terminal_stderr::TerminalStderrGuard,
     ) -> Self {
+        let terminal_status = Arc::new(std::sync::Mutex::new(
+            crate::terminal_status::Reporter::default(),
+        ));
         let (draw_tx, _) = broadcast::channel(1);
         let frame_requester = FrameRequester::new(draw_tx.clone());
 
@@ -743,13 +747,14 @@ impl Tui {
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
             alt_saved_viewport: None,
             #[cfg(unix)]
-            suspend_context: SuspendContext::new(),
+            suspend_context: SuspendContext::new().with_terminal_status(terminal_status.clone()),
             alt_screen_active: Arc::new(AtomicBool::new(false)),
             terminal_focused: Arc::new(AtomicBool::new(true)),
             enhanced_keys_supported,
             terminal_app_over_ssh: false,
             notification_backend: Some(detect_backend(NotificationMethod::default())),
             notification_condition: NotificationCondition::default(),
+            terminal_status,
             scrollback,
             alt_screen_enabled: true,
             owned_screen: false,
@@ -924,6 +929,11 @@ impl Tui {
         F: FnOnce() -> Fut,
         Fut: Future<Output = R>,
     {
+        let status_snapshot = self
+            .terminal_status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .end_for_handoff(&mut stdout().lock());
         // Pause crossterm events to avoid stdin conflicts with external program `f`.
         self.pause_events();
 
@@ -996,6 +1006,7 @@ impl Tui {
             let _ = self.enter_alt_screen();
         }
 
+        self.report_terminal_status(status_snapshot);
         self.resume_events();
         self.schedule_screen_size_recheck(Duration::ZERO);
         output
@@ -1026,6 +1037,35 @@ impl Tui {
                 self.notification_backend = None;
                 false
             }
+        }
+    }
+
+    pub(crate) fn report_terminal_status(
+        &mut self,
+        snapshot: Option<crate::terminal_status::Snapshot>,
+    ) {
+        let mut reporter = self
+            .terminal_status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err(error) = reporter.report(snapshot, &mut std::io::stdout().lock()) {
+            tracing::debug!(%error, "terminal status output failed");
+        }
+    }
+
+    pub(crate) fn end_terminal_status(&mut self) {
+        self.report_terminal_status(None);
+    }
+
+    pub(crate) fn report_unknown_terminal_status(&mut self) {
+        let registered = self
+            .terminal_status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .current()
+            .is_some();
+        if registered {
+            self.report_terminal_status(Some(crate::terminal_status::Snapshot::unknown()));
         }
     }
 

@@ -68,6 +68,9 @@ impl App {
     ) {
         match event {
             AppServerEvent::Lagged { skipped } => {
+                for channel in self.thread_event_channels.values() {
+                    channel.store.lock().await.terminal_status.uncertain();
+                }
                 tracing::warn!(
                     skipped,
                     "app-server event consumer lagged; dropping ignored events"
@@ -115,6 +118,9 @@ impl App {
             AppServerEvent::Disconnected { message } => {
                 if self.begin_reconnect() {
                     return;
+                }
+                for channel in self.thread_event_channels.values() {
+                    channel.store.lock().await.terminal_status.uncertain();
                 }
                 tracing::warn!("app-server event stream disconnected: {message}");
                 self.chat_widget.add_error_message(message.clone());
