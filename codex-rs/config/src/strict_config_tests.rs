@@ -295,3 +295,16 @@ fn removed_private_desktop_setting_has_migration_hint() {
         "Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `windows.sandbox_private_desktop` is ignored. Remove windows.sandbox_private_desktop; legacy Windows sandboxes always use a private desktop."
     );
 }
+
+#[test]
+fn terminal_status_is_explicit_and_only_accepts_the_private_rustty_protocol() {
+    let default: ConfigToml = toml::from_str("").unwrap();
+    assert!(default.tui.is_none());
+    let enabled: ConfigToml = toml::from_str("[tui]\nterminal_status = \"rustty\"\n").unwrap();
+    assert_eq!(
+        enabled.tui.unwrap().terminal_status,
+        Some(crate::types::TerminalStatus::Rustty)
+    );
+    assert!(toml::from_str::<ConfigToml>("[tui]\nterminal_status = \"auto\"\n").is_err());
+    assert!(toml::from_str::<ConfigToml>("[tui]\nterminal_status = true\n").is_err());
+}
