@@ -304,7 +304,7 @@ pub struct ReviewArgs {
     #[arg(
         long = "uncommitted",
         default_value_t = false,
-        conflicts_with_all = ["base", "commit", "prompt"]
+        conflicts_with_all = ["base", "commit"]
     )]
     pub uncommitted: bool,
 
@@ -312,7 +312,7 @@ pub struct ReviewArgs {
     #[arg(
         long = "base",
         value_name = "BRANCH",
-        conflicts_with_all = ["uncommitted", "commit", "prompt"]
+        conflicts_with_all = ["uncommitted", "commit"]
     )]
     pub base: Option<String>,
 
@@ -320,7 +320,7 @@ pub struct ReviewArgs {
     #[arg(
         long = "commit",
         value_name = "SHA",
-        conflicts_with_all = ["uncommitted", "base", "prompt"]
+        conflicts_with_all = ["uncommitted", "base"]
     )]
     pub commit: Option<String>,
 
@@ -328,7 +328,8 @@ pub struct ReviewArgs {
     #[arg(long = "title", value_name = "TITLE", requires = "commit")]
     pub commit_title: Option<String>,
 
-    /// Custom review instructions. If `-` is used, read from stdin.
+    /// Custom review instructions, appended to the selected target's instructions.
+    /// If `-` is used, read from stdin.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,
 }
