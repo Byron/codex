@@ -2,6 +2,50 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn review_accepts_prompt_with_each_target() {
+    for target in [
+        vec!["--uncommitted"],
+        vec!["--base", "main"],
+        vec!["--commit", "deadbeef", "--title", "Fix bug"],
+    ] {
+        for prompt in ["also investigate the CI adjustment", "-"] {
+            let mut args = vec!["codex-exec", "review"];
+            args.extend(target.iter().copied());
+            args.push(prompt);
+            let cli = Cli::try_parse_from(args).expect("target should accept instructions");
+            let Some(Command::Review(args)) = cli.command else {
+                panic!("expected review command");
+            };
+            assert_eq!(args.prompt.as_deref(), Some(prompt));
+            assert_eq!(args.uncommitted, target[0] == "--uncommitted");
+            assert_eq!(
+                args.base.as_deref(),
+                (target[0] == "--base").then_some("main")
+            );
+            assert_eq!(
+                args.commit.as_deref(),
+                (target[0] == "--commit").then_some("deadbeef")
+            );
+        }
+    }
+}
+
+#[test]
+fn review_targets_remain_mutually_exclusive() {
+    for targets in [
+        vec!["--uncommitted", "--base", "main"],
+        vec!["--uncommitted", "--commit", "deadbeef"],
+        vec!["--base", "main", "--commit", "deadbeef"],
+    ] {
+        let mut args = vec!["codex-exec", "review"];
+        args.extend(targets);
+        args.push("additional instructions");
+        let error = Cli::try_parse_from(args).expect_err("review targets should conflict");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}
+
+#[test]
 fn resume_parses_prompt_after_global_flags() {
     const PROMPT: &str = "echo resume-with-global-flags-after-subcommand";
     let cli = Cli::parse_from([
