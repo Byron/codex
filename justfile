@@ -8,6 +8,7 @@ set windows-shell := ["python", "-c", 'import os, runpy; runpy.run_path(os.envir
 rust_min_stack := "8388608" # 8 MiB
 python := if os_family() == "windows" { "python" } else { "python3" }
 codex_dev_package_dir := home_directory() / ".cargo/bin/codex-dev"
+native_package_target := if os() == "linux" { if arch() == "aarch64" { "aarch64-unknown-linux-gnu" } else { "x86_64-unknown-linux-gnu" } } else if os() == "macos" { if arch() == "aarch64" { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" } } else if arch() == "aarch64" { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
 
 # Display help
 help:
@@ -173,7 +174,7 @@ build-for-release:
 # Build a self-contained local CLI package directory with debug symbols.
 [no-cd]
 build-cli-package package_dir=codex_dev_package_dir:
-    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --cargo-profile dev --package-dir "{{ package_dir }}" --force
+    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir "{{ package_dir }}" --force
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
