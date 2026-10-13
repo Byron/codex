@@ -3129,6 +3129,30 @@ enabled = true
     }
 
     #[test]
+    fn review_accepts_base_and_prompt_with_config_override() {
+        let prompt = "also investigate the CI adjustment and ensure CI is running this new backend";
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "review",
+            "--base",
+            "main",
+            "-c",
+            "model_reasoning_effort=\"max\"",
+            prompt,
+        ])
+        .expect("review should accept a target and instructions");
+        let Some(Subcommand::Review(review)) = cli.subcommand else {
+            panic!("expected review subcommand");
+        };
+        assert_eq!(review.args.base.as_deref(), Some("main"));
+        assert_eq!(review.args.prompt.as_deref(), Some(prompt));
+        assert_eq!(
+            cli.config_overrides.raw_overrides,
+            vec!["model_reasoning_effort=\"max\""]
+        );
+    }
+
+    #[test]
     fn import_remains_an_interactive_prompt() {
         let cli = MultitoolCli::try_parse_from(["codex", "import"]).expect("parse");
 

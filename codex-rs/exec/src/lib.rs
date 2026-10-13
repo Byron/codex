@@ -918,7 +918,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
 
     let (initial_operation, prompt_summary) = match (command.as_ref(), prompt, images) {
         (Some(ExecCommand::Review(review_cli)), _, _) => {
-            let review_request = build_review_request(review_cli)?;
+            let review_request = build_review_request(review_cli, &config.cwd)?;
             let summary = codex_core::review_prompts::user_facing_hint(&review_request.target);
             (InitialOperation::Review { review_request }, summary)
         }
@@ -2396,24 +2396,47 @@ fn resolve_root_prompt(prompt_arg: Option<String>) -> String {
     }
 }
 
-fn build_review_request(args: &ReviewArgs) -> anyhow::Result<ReviewRequest> {
+fn build_review_request(args: &ReviewArgs, cwd: &AbsolutePathBuf) -> anyhow::Result<ReviewRequest> {
+    // Custom reviews bypass app-server target validation, so normalize targets before rendering.
     let target = if args.uncommitted {
-        ReviewTarget::UncommittedChanges
-    } else if let Some(branch) = args.base.clone() {
-        ReviewTarget::BaseBranch { branch }
-    } else if let Some(sha) = args.commit.clone() {
-        ReviewTarget::Commit {
-            sha,
-            title: args.commit_title.clone(),
+        Some(ReviewTarget::UncommittedChanges)
+    } else if let Some(branch) = &args.base {
+        let branch = branch.trim().to_string();
+        if branch.is_empty() {
+            anyhow::bail!("branch must not be empty");
         }
-    } else if let Some(prompt_arg) = args.prompt.clone() {
+        Some(ReviewTarget::BaseBranch { branch })
+    } else if let Some(sha) = &args.commit {
+        let sha = sha.trim().to_string();
+        if sha.is_empty() {
+            anyhow::bail!("sha must not be empty");
+        }
+        Some(ReviewTarget::Commit {
+            sha,
+            title: args
+                .commit_title
+                .as_ref()
+                .map(|title| title.trim().to_string())
+                .filter(|title| !title.is_empty()),
+        })
+    } else {
+        None
+    };
+
+    let target = if let Some(prompt_arg) = args.prompt.clone() {
         let prompt = resolve_prompt(Some(prompt_arg)).trim().to_string();
         if prompt.is_empty() {
             anyhow::bail!("Review prompt cannot be empty");
         }
-        ReviewTarget::Custom {
-            instructions: prompt,
-        }
+        let instructions = if let Some(target) = target {
+            let target_prompt = codex_core::review_prompts::review_prompt(&target, cwd)?;
+            format!("{target_prompt}\n\nAdditional review instructions:\n{prompt}")
+        } else {
+            prompt
+        };
+        ReviewTarget::Custom { instructions }
+    } else if let Some(target) = target {
+        target
     } else {
         anyhow::bail!(
             "Specify --uncommitted, --base, --commit, or provide custom review instructions"

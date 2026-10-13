@@ -1,4 +1,5 @@
 use super::*;
+use clap::Parser;
 use codex_app_server_protocol::AuthRecoveryNotification;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::config_types::ApprovalsReviewer;
@@ -107,7 +108,8 @@ fn builds_uncommitted_review_request() {
         commit_title: None,
         prompt: None,
     };
-    let request = build_review_request(&args).expect("builds uncommitted review request");
+    let request = build_review_request(&args, &AbsolutePathBuf::current_dir().expect("cwd"))
+        .expect("builds uncommitted review request");
 
     let expected = ReviewRequest {
         target: ReviewTarget::UncommittedChanges,
@@ -126,7 +128,8 @@ fn builds_commit_review_request_with_title() {
         commit_title: Some("Add review command".to_string()),
         prompt: None,
     };
-    let request = build_review_request(&args).expect("builds commit review request");
+    let request = build_review_request(&args, &AbsolutePathBuf::current_dir().expect("cwd"))
+        .expect("builds commit review request");
 
     let expected = ReviewRequest {
         target: ReviewTarget::Commit {
@@ -148,7 +151,8 @@ fn builds_custom_review_request_trims_prompt() {
         commit_title: None,
         prompt: Some("  custom review instructions  ".to_string()),
     };
-    let request = build_review_request(&args).expect("builds custom review request");
+    let request = build_review_request(&args, &AbsolutePathBuf::current_dir().expect("cwd"))
+        .expect("builds custom review request");
 
     let expected = ReviewRequest {
         target: ReviewTarget::Custom {
@@ -158,6 +162,72 @@ fn builds_custom_review_request_trims_prompt() {
     };
 
     assert_eq!(request, expected);
+}
+
+#[test]
+fn builds_targeted_review_requests_with_additional_instructions() {
+    let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+    for (target_args, target) in [
+        (vec!["--uncommitted"], ReviewTarget::UncommittedChanges),
+        (
+            vec!["--commit", " deadbeef ", "--title", " Fix bug "],
+            ReviewTarget::Commit {
+                sha: "deadbeef".to_string(),
+                title: Some("Fix bug".to_string()),
+            },
+        ),
+    ] {
+        let mut args = vec!["codex-exec", "review"];
+        args.extend(target_args);
+        args.push("  investigate CI  ");
+        let cli = Cli::try_parse_from(args).expect("parse review");
+        let Some(ExecCommand::Review(args)) = cli.command else {
+            panic!("expected review command");
+        };
+        let request = build_review_request(&args, &cwd).expect("build targeted review");
+        let target_prompt =
+            codex_core::review_prompts::review_prompt(&target, &cwd).expect("render target prompt");
+        assert_eq!(
+            review_target_to_api(request.target),
+            ApiReviewTarget::Custom {
+                instructions: format!(
+                    "{target_prompt}\n\nAdditional review instructions:\ninvestigate CI"
+                ),
+            }
+        );
+    }
+}
+
+#[test]
+fn targeted_review_rejects_empty_instructions_and_targets() {
+    let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+    for (target_args, prompt, error) in [
+        (vec!["--uncommitted"], "  ", "Review prompt cannot be empty"),
+        (
+            vec!["--base", "  "],
+            "investigate CI",
+            "branch must not be empty",
+        ),
+        (
+            vec!["--commit", "  "],
+            "investigate CI",
+            "sha must not be empty",
+        ),
+    ] {
+        let mut args = vec!["codex-exec", "review"];
+        args.extend(target_args);
+        args.push(prompt);
+        let cli = Cli::try_parse_from(args).expect("parse review");
+        let Some(ExecCommand::Review(args)) = cli.command else {
+            panic!("expected review command");
+        };
+        assert_eq!(
+            build_review_request(&args, &cwd)
+                .expect_err("invalid review should fail")
+                .to_string(),
+            error
+        );
+    }
 }
 
 #[test]

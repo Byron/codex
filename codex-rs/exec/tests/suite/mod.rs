@@ -16,6 +16,7 @@ mod originator;
 mod output_schema;
 mod prompt_stdin;
 mod resume;
+mod review;
 mod sandbox;
 #[cfg(target_os = "macos")]
 mod seatbelt;
