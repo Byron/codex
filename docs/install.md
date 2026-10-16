@@ -2,11 +2,11 @@
 
 ### System requirements
 
-| Requirement                 | Details                                                         |
-| --------------------------- | --------------------------------------------------------------- |
-| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 **via WSL2** |
-| Git (optional, recommended) | 2.23+ for built-in PR helpers                                   |
-| RAM                         | 4-GB minimum (8-GB recommended)                                 |
+| Requirement                 | Details                                            |
+| --------------------------- | -------------------------------------------------- |
+| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 |
+| Git (optional, recommended) | 2.23+ for built-in PR helpers                      |
+| RAM                         | 4-GB minimum (8-GB recommended)                    |
 
 ### DotSlash
 
@@ -48,6 +48,43 @@ just test
 # Avoid `--all-features` for routine local runs because it increases build
 # time and `target/` disk usage by compiling additional feature combinations.
 ```
+
+### Windows development package
+
+On native Windows, install the MSVC Rust toolchain, Visual Studio Build Tools
+with the **Desktop development with C++** workload and Windows SDK, Python 3.11+
+(`python` on `PATH`), PowerShell 7.4+ (`pwsh` on `PATH`), and `just`.
+From the repository, build a development package with:
+
+```powershell
+just build-cli-package
+& "$env:LOCALAPPDATA\Programs\CodexDev\codex-dev.cmd" --version
+& "$env:LOCALAPPDATA\Programs\CodexDev\codex-dev.cmd"
+```
+
+The recipe uses the native Windows MSVC target and Cargo's `dev` profile. It
+packages the CLI, code-mode host, Windows sandbox helpers, and ripgrep under
+`%LOCALAPPDATA%\Programs\CodexDev`. Debug symbols remain in Cargo's build output.
+You can override the package directory, including paths containing spaces:
+
+```powershell
+just build-cli-package 'D:\Dev Tools\CodexDev'
+& 'D:\Dev Tools\CodexDev\codex-dev.cmd' --version
+```
+
+Add the package root (the directory containing `codex-dev.cmd`) to your `PATH`
+to run `codex-dev` from any terminal. Keep its `bin` directory off `PATH` so the
+packaged `codex.exe` does not shadow your regular installation.
+
+The launcher creates `%LOCALAPPDATA%\CodexDev` for its configuration, login, and
+sessions by default. For ChatGPT authentication, sign in separately with
+`codex-dev login`. The launcher honors an explicit `CODEX_HOME` override.
+Rebuilding replaces the package directory; the default state directory is
+separate and survives rebuilds. Close the dev CLI before rebuilding so Windows
+can replace its executables.
+
+On macOS and Linux, `just build-cli-package` continues to write the package to
+`~/.cargo/bin/codex-dev` by default.
 
 ## Tracing / verbose logging
 

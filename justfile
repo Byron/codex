@@ -7,7 +7,7 @@ set windows-shell := ["python", "-c", 'import os, runpy; runpy.run_path(os.envir
 
 rust_min_stack := "8388608" # 8 MiB
 python := if os_family() == "windows" { "python" } else { "python3" }
-codex_dev_package_dir := home_directory() / ".cargo/bin/codex-dev"
+codex_dev_package_dir := if os_family() == "windows" { env("LOCALAPPDATA") / "Programs/CodexDev" } else { home_directory() / ".cargo/bin/codex-dev" }
 native_package_target := if os() == "linux" { if arch() == "aarch64" { "aarch64-unknown-linux-gnu" } else { "x86_64-unknown-linux-gnu" } } else if os() == "macos" { if arch() == "aarch64" { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" } } else if arch() == "aarch64" { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
 
 # Display help
@@ -173,8 +173,16 @@ build-for-release:
 
 # Build a self-contained local CLI package directory with debug symbols.
 [no-cd]
+[unix]
 build-cli-package package_dir=codex_dev_package_dir:
-    {{ python }} {{ justfile_directory() }}/scripts/build_codex_package.py --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir "{{ package_dir }}" --force
+    {{ python }} "{{ justfile_directory() }}/scripts/build_codex_package.py" --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir "$1" --force
+
+# Build a Windows dev package with a separate command and Codex home.
+[no-cd]
+[windows]
+build-cli-package package_dir=codex_dev_package_dir:
+    {{ python }} "$env:CODEX_REPO_ROOT/scripts/build_codex_package.py" --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir $args[1] --force
+    Copy-Item -LiteralPath "$env:CODEX_REPO_ROOT/scripts/codex-dev.cmd" -Destination (Join-Path $args[1] 'codex-dev.cmd') -ErrorAction Stop
 
 # Regenerate the json schema for config.toml from the current config types.
 write-config-schema:
