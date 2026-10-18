@@ -143,6 +143,7 @@ pub(super) async fn run(cli: Cli, endpoint: RemoteAppServerEndpoint) -> anyhow::
         processor,
         bound_output,
         interrupt_rx,
+        terminal_status::ReviewStatus::new(/*enabled*/ false, std::io::stderr()),
     )
     .await
 }

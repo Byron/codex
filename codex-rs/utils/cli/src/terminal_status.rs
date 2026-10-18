@@ -10,7 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Idle,
     Working,
@@ -22,8 +22,8 @@ pub(crate) enum State {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Snapshot {
-    pub(crate) state: State,
+pub struct Snapshot {
+    pub state: State,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,7 +33,7 @@ pub(crate) struct Snapshot {
 }
 
 impl Snapshot {
-    pub(crate) fn unknown() -> Self {
+    pub fn unknown() -> Self {
         Self {
             state: State::Unknown,
             label: None,
@@ -42,7 +42,7 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn new(
+    pub fn new(
         state: State,
         label: Option<&str>,
         thread_id: String,
@@ -85,21 +85,21 @@ fn valid_id(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
-/// Shared only with synchronous job-control polling on the foreground TUI loop.
+/// Emits status synchronously, including during foreground job-control polling.
 /// Failed output disables this reporter; there is no teardown writer or retry queue.
 #[derive(Default)]
-pub(crate) struct Reporter {
+pub struct Reporter {
     last: Option<Snapshot>,
     failed: bool,
     tmux: Option<bool>,
 }
 
 impl Reporter {
-    pub(crate) fn current(&self) -> Option<Snapshot> {
+    pub fn current(&self) -> Option<Snapshot> {
         self.last.clone()
     }
 
-    pub(crate) fn end_for_handoff(&mut self, output: &mut impl Write) -> Option<Snapshot> {
+    pub fn end_for_handoff(&mut self, output: &mut impl Write) -> Option<Snapshot> {
         let snapshot = self.current();
         if let Err(error) = self.report(None, output) {
             tracing::debug!(%error, "terminal status handoff failed");
@@ -107,7 +107,7 @@ impl Reporter {
         snapshot
     }
 
-    pub(crate) fn report(
+    pub fn report(
         &mut self,
         snapshot: Option<Snapshot>,
         output: &mut impl Write,
