@@ -4,6 +4,7 @@ pub(crate) mod format_env_display;
 mod resume_command;
 mod sandbox_mode_cli_arg;
 mod shared_options;
+pub mod terminal_status;
 
 pub use approval_mode_cli_arg::ApprovalModeCliArg;
 pub use codex_protocol::config_types::ProfileV2Name;

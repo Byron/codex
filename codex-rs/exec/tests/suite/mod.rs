@@ -17,6 +17,8 @@ mod output_schema;
 mod prompt_stdin;
 mod resume;
 mod review;
+#[cfg(unix)]
+mod review_terminal_status;
 mod sandbox;
 #[cfg(target_os = "macos")]
 mod seatbelt;

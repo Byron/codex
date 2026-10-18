@@ -11,6 +11,7 @@ mod event_processor;
 mod event_processor_with_human_output;
 pub(crate) mod event_processor_with_jsonl_output;
 pub(crate) mod exec_events;
+mod terminal_status;
 mod worktree;
 
 pub use cli::Cli;
@@ -1195,6 +1196,12 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
     });
 
+    let mut terminal_status = terminal_status::ReviewStatus::new(
+        matches!(&initial_operation, InitialOperation::Review { .. })
+            && config.tui_terminal_status.is_some()
+            && std::io::stderr().is_terminal(),
+        std::io::stderr(),
+    );
     let task_id = match initial_operation {
         InitialOperation::ForkOnly => {
             request_shutdown(&client, &mut request_ids, &primary_thread_id_for_span)
@@ -1284,12 +1291,12 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             )
             .await
             .map_err(anyhow::Error::msg)?;
-            let _ = event_processor.process_server_notification(ServerNotification::TurnStarted(
-                TurnStartedNotification {
-                    thread_id: response.review_thread_id.clone(),
-                    turn: response.turn.clone(),
-                },
-            ));
+            let notification = ServerNotification::TurnStarted(TurnStartedNotification {
+                thread_id: response.review_thread_id.clone(),
+                turn: response.turn.clone(),
+            });
+            terminal_status.observe(&notification);
+            let _ = event_processor.process_server_notification(notification);
             let task_id = response.turn.id;
             info!("Sent review request with event ID: {task_id}");
             task_id
@@ -1331,6 +1338,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         };
 
         let Some(server_event) = server_event else {
+            terminal_status.unknown();
             break;
         };
 
@@ -1364,6 +1372,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     &primary_thread_id_for_requests,
                     &task_id,
                 ) {
+                    terminal_status.observe(&notification);
                     maybe_backfill_turn_completed_items(
                         config.ephemeral,
                         &client,
@@ -1390,6 +1399,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 }
             }
             InProcessServerEvent::Lagged { skipped } => {
+                terminal_status.unknown();
                 let message = lagged_event_warning_message(skipped);
                 warn!("{message}");
                 event_processor.process_warning(message);
@@ -1401,6 +1411,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         warn!("in-process app-server shutdown failed: {err}");
     }
     event_processor.print_final_output();
+    terminal_status.end();
     if error_seen {
         std::process::exit(1);
     }

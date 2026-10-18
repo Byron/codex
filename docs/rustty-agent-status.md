@@ -4,6 +4,8 @@ This companion TUI change reports the conversation currently displayed by each
 Codex TUI to its own terminal output. Rustty can assign one Stream Deck tile per
 reporting pane, including two ordinary TUIs in the same directory. Switching
 threads changes that pane's existing tile. Hidden subagents have no separate tile.
+The same opt-in setting also reports noninteractive `codex review` and
+`codex exec review` runs.
 
 Build from this checkout without installing or replacing anything:
 
@@ -11,6 +13,7 @@ Build from this checkout without installing or replacing anything:
 cd codex-rs
 CARGO_TARGET_DIR=/tmp/codex-rustty-build cargo build -p codex-cli
 /tmp/codex-rustty-build/debug/codex -c 'tui.terminal_status="rustty"'
+/tmp/codex-rustty-build/debug/codex -c 'tui.terminal_status="rustty"' review --uncommitted
 ```
 
 The command-line override changes no configuration file. With a build containing
@@ -27,6 +30,11 @@ shared app-server/daemon operation are preserved: each TUI uses its own existing
 event subscription and stdout, not a proxy, hook, observer server, or guessed
 `/dev/tty`. Redirected stdout does not receive status frames. Building and testing
 this feature does not change installed applications or global Codex settings.
+
+Review commands emit status on terminal stderr, leaving stdout available for the
+review result or `--json` events. Redirecting stderr disables review reporting;
+redirecting stdout or using `--color never` does not. Ordinary `codex exec` runs
+do not emit status frames.
 
 The dashboard requires no additional daemon. Rustty owns pane status, assignments,
 and the device. The emitter works both with Codex's embedded server (`--no-daemon`)
@@ -53,6 +61,15 @@ disables reporting for that TUI, without stopping its terminal or retrying parti
 frames. Normal redraw, compaction, title/progress expiry and thread switches do
 not end a lifecycle. The nested resume picker reports unknown while its separate
 event pump temporarily stops observing the displayed conversation.
+
+Noninteractive reviews use the same encoder and lock stderr for each frame. A
+successful `review/start` begins `working`; filtered notifications report `done`
+with the actual turn ID, `error` on failure, or `idle` on interruption. Transient
+retry errors leave the current state unchanged. Lagged or unexpectedly closed
+event streams report `unknown`. The exec loop emits `end` after the final output,
+including before a failure exit; unwinding after an output error also ends the
+report from the same task. Interactive requests are rejected or cancelled
+by the existing exec handlers, so reviews do not wait for terminal input.
 
 Decoded JSON is at most 1024 bytes. Labels omit control characters and are
 truncated at grapheme boundaries to at most 128 UTF-8 bytes. IDs must be nonempty
@@ -108,7 +125,7 @@ command hooks and captured tool stdout do not implement this integration.
 
 | Category | Boundary |
 | --- | --- |
-| Producer | Full structured status requires this companion TUI build. No plugin or hook installation is sufficient. |
+| Producer | Full structured status requires this companion Codex build, including the TUI and review commands. No plugin or hook installation is sufficient. |
 | Scope | One serialized reporter per Rustty PTY; no hidden-subagent or outside-Rustty tile, and no agent command/approval/usage action. |
 | Semantics | Done is an observed completed turn; missing process cleanup remains uncertain. Initial historical completion is idle. |
 | Multiplexers | Uses the OSC 9 backend's tmux DCS passthrough convention. Multiple concurrent reporters in tmux panes sharing one Rustty PTY exceed v1. End-to-end tmux/SSH behavior requires separate validation. |
@@ -129,10 +146,16 @@ notifications, normal `end`, and disabled reporting. The optional-input case use
 TUIs and the opt-out TUI exited successfully, and the fixture reaped its daemon.
 These checks do not establish other transports or real-device support.
 
+The review PTY regressions verify real review thread/turn IDs, ordered working and
+completion frames, error and exit cleanup, human/JSON stdout isolation, opt-out,
+and redirected-stderr silence with local mock responses.
+
 Run the focused tests with the repository's test-thread stack size:
 
 ```sh
 RUST_MIN_STACK=8388608 cargo test -p codex-tui --lib terminal_status
+cargo test -p codex-utils-cli terminal_status
+RUST_MIN_STACK=8388608 cargo test -p codex-exec terminal_status
 RUST_MIN_STACK=8388608 cargo test -p codex-tui --lib notifications::osc9
 RUST_MIN_STACK=8388608 cargo test -p codex-tui --lib daemon_startup_tests
 cargo test -p codex-config terminal_status

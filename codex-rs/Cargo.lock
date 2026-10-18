@@ -3194,6 +3194,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64 0.22.1",
  "clap",
  "codex-app-server-client",
  "codex-app-server-protocol",
@@ -5078,12 +5079,17 @@ dependencies = [
 name = "codex-utils-cli"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "codex-protocol",
  "codex-shell-command",
+ "codex-terminal-detection",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "toml 0.9.11+spec-1.1.0",
+ "tracing",
+ "unicode-segmentation",
 ]
 
 [[package]]
