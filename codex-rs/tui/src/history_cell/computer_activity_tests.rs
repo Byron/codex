@@ -192,3 +192,60 @@ fn computer_activity_preview_handles_unicode_and_long_diagnostics() {
     );
     assert!(cell.transcript_lines(/*width*/ 100).len() > 20);
 }
+
+#[test]
+fn computer_activity_keeps_recent_images_and_all_capture_markers() {
+    let image = json!({"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="});
+    let mut older = ComputerActivityCell::default();
+    older.complete(
+        call("older", "Older screenshot"),
+        Duration::ZERO,
+        Ok(CallToolResult {
+            content: vec![image.clone()],
+            ..result("").unwrap()
+        }),
+    );
+    let mut cell = ComputerActivityCell::default();
+    let mut latest_images = Vec::new();
+    for index in 0..result::MAX_IMAGES + 1 {
+        cell.complete(
+            call(&index.to_string(), "Capture screenshot"),
+            Duration::ZERO,
+            Ok(CallToolResult {
+                content: vec![image.clone()],
+                ..result("").unwrap()
+            }),
+        );
+        latest_images.push(cell.image_data().pop().unwrap());
+    }
+    cell.prepend(older);
+    let retained = cell.image_data();
+    assert_eq!(retained.len(), result::MAX_IMAGES);
+    assert!(
+        retained
+            .iter()
+            .zip(&latest_images[1..])
+            .all(|(a, b)| Arc::ptr_eq(a, b))
+    );
+    assert!(cell.group.calls.iter().all(has_image));
+    assert!(cell.group.calls[0].image_data().is_empty());
+    assert!(cell.group.calls[1].image_data().is_empty());
+}
+
+#[test]
+fn computer_activity_image_bytes_share_one_budget() {
+    let mut cell = ComputerActivityCell::default();
+    for index in 0..3 {
+        let mut call = call(&index.to_string(), "Large image");
+        call.result = Some(Ok(McpToolResult {
+            content: Vec::new(),
+            is_error: false,
+            has_image: true,
+            images: vec![vec![index as u8; result::MAX_IMAGE_BYTES / 2 + 1].into()],
+        }));
+        cell.start(call);
+    }
+    assert_eq!(cell.image_data().len(), 1);
+    assert_eq!(cell.image_data()[0][0], 2);
+    assert!(cell.group.calls.iter().all(has_image));
+}

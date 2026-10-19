@@ -365,6 +365,13 @@ impl HistoryCell for McpToolCallCell {
         vec![format!("{verb} {}", self.compact_tool_name())]
     }
 
+    fn image_data(&self) -> Vec<Arc<[u8]>> {
+        match &self.result {
+            Some(Ok(result)) => result.images.clone(),
+            _ => Vec::new(),
+        }
+    }
+
     fn activity_ids(&self) -> Vec<String> {
         vec![format!("mcp:{}", self.call_id)]
     }

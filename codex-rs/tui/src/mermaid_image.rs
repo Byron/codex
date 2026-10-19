@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use image::RgbaImage;
 use mermaid_rs_renderer::LayoutConfig;
@@ -15,6 +14,8 @@ use crate::pets::ImageProtocol;
 use crate::render::highlight::current_syntax_theme;
 use crate::terminal_palette;
 use crate::transcript_image::TranscriptImage;
+use crate::transcript_image::svg::bounded_layers;
+use crate::transcript_image::svg::svg_options;
 use crate::transcript_image::terminal_cell_size;
 
 const MAX_SOURCE_BYTES: usize = 8 * 1024;
@@ -316,23 +317,6 @@ fn safe_graph_styles(graph: &mermaid_rs_renderer::Graph) -> bool {
             .all(|b| paints(&[b.color.as_deref()]))
 }
 
-fn bounded_layers(group: &usvg::Group, scale: f32, remaining: &mut f32) -> bool {
-    if group.should_isolate() {
-        let bounds = group.abs_layer_bounding_box();
-        let pixels = (bounds.width() * scale + 4.0).ceil() * (bounds.height() * scale + 4.0).ceil();
-        if !pixels.is_finite() || pixels > *remaining {
-            return false;
-        }
-        *remaining -= pixels;
-    }
-    group.children().iter().all(|node| match node {
-        usvg::Node::Group(group) => bounded_layers(group, scale, remaining),
-        usvg::Node::Text(text) => bounded_layers(text.flattened(), scale, remaining),
-        usvg::Node::Path(_) => true,
-        usvg::Node::Image(_) => false,
-    })
-}
-
 fn theme() -> (Theme, (u8, u8, u8)) {
     let syntax_theme = current_syntax_theme();
     let background = terminal_palette::default_bg()
@@ -366,24 +350,6 @@ fn theme() -> (Theme, (u8, u8, u8)) {
 
 fn hex((r, g, b): (u8, u8, u8)) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
-}
-
-fn svg_options() -> usvg::Options<'static> {
-    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
-    usvg::Options {
-        font_family: "sans-serif".to_string(),
-        fontdb: Arc::clone(FONTS.get_or_init(|| {
-            let mut fonts = usvg::fontdb::Database::new();
-            fonts.load_system_fonts();
-            Arc::new(fonts)
-        })),
-        // Mermaid source may contain URLs; rendering must never read their contents.
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: Box::new(|_, _, _| None),
-            resolve_string: Box::new(|_, _| None),
-        },
-        ..Default::default()
-    }
 }
 
 fn safe_svg(svg: &str) -> bool {

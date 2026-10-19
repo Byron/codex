@@ -957,10 +957,9 @@ mod tests {
             (crate::pets::ImageProtocol::KittyLocalFile, None),
             (crate::pets::ImageProtocol::Kitty, Some(0x80_0100)),
         ] {
-            let image = std::sync::Arc::new(
+            let image =
                 crate::transcript_image::TranscriptImage::load(&path, /*width*/ 40, protocol)
-                    .unwrap(),
-            );
+                    .unwrap();
             let mut terminal =
                 Terminal::with_options(CaptureBackend::new(/*width*/ 40, /*height*/ 12)).unwrap();
             terminal.tmux_kitty_image_base = tmux_base;

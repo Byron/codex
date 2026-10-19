@@ -9,6 +9,13 @@ impl ChatWidget {
         self.transcript.active_cell.as_deref()
     }
 
+    pub(crate) fn active_cell_image_data(&self) -> Vec<Arc<[u8]>> {
+        self.transcript
+            .active_cell
+            .as_ref()
+            .map_or_else(Vec::new, |cell| cell.image_data())
+    }
+
     /// Render only the chosen activity presentation, before any auxiliary live text.
     pub(crate) fn active_cell_owned_transcript_lines(
         &self,
@@ -40,6 +47,7 @@ impl ChatWidget {
             activity,
             auxiliary,
             disclosure,
+            images: self.active_cell_image_data(),
         })
     }
     pub(crate) fn active_auxiliary_lines(&self, width: u16) -> Vec<HyperlinkLine> {

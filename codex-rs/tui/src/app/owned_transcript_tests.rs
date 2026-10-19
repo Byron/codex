@@ -552,9 +552,8 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
     let path = dir.path().join("preview.png");
     image::RgbaImage::from_pixel(8, 16, image::Rgba([80, 30, 20, 255])).save(&path)?;
     let protocol = crate::pets::ImageProtocol::KittyLocalFile;
-    let image = Arc::new(
-        crate::transcript_image::TranscriptImage::load(&path, area.width, protocol).unwrap(),
-    );
+    let image =
+        crate::transcript_image::TranscriptImage::load(&path, area.width, protocol).unwrap();
     let neighbor = Rect::new(/*x*/ 4, /*y*/ 9, image.columns, image.rows);
     let presented = |tui: &tui::Tui| {
         tui.retained_images

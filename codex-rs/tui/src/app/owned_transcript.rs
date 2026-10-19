@@ -14,7 +14,6 @@ use crate::bottom_pane::CommandPopupPlacement;
 use crate::bottom_pane::ComposerRenderOptions;
 use crate::custom_terminal::Frame;
 use crate::empty_state_animation::ComposerState;
-#[cfg(test)]
 use crate::history_cell::HistoryRenderMode;
 use crate::keymap::KeymapContext;
 use crate::keymap::bindings_for_action;
@@ -203,6 +202,7 @@ impl App {
         let chat_widget = &self.chat_widget;
         let transcript_width = chat_widget.history_wrap_width(width);
         let view = &mut self.transcript_view;
+        view.embedded_image_protocol = chat_widget.pet_image_support().protocol();
         view.set_mermaid_image_protocol(chat_widget.pet_image_support().protocol());
         view.mouse_scroll_speed = self.local_settings.tui.mouse_scroll_speed.unwrap_or(1.0);
         view.primary_selection = self.right_click_paste_environment.primary;
@@ -225,12 +225,36 @@ impl App {
             chat_widget.active_cell_transcript_hyperlink_lines(width)
         });
         let changed = if detailed {
-            view.sync_live_tail(transcript_width, active_key, |width| {
-                chat_widget.active_cell_transcript_hyperlink_lines(width)
-            })
+            view.sync_live_activity_tail(
+                transcript_width,
+                active_key,
+                /*expanded*/ false,
+                |width| {
+                    Some(crate::transcript_view::ActivityTranscriptLines {
+                        activity: chat_widget.active_cell_transcript_hyperlink_lines(width)?,
+                        auxiliary: Vec::new(),
+                        disclosure: None,
+                        images: chat_widget.active_cell_image_data(),
+                    })
+                },
+            )
         } else if let Some(row) = live_summary {
+            let protocol = view.embedded_image_protocol.filter(|_| {
+                expanded && chat_widget.history_render_mode() == HistoryRenderMode::Rich
+            });
             view.sync_live_layout(transcript_width, active_key, |width| {
-                Some(row.layout(width, expanded, chat_widget.active_auxiliary_lines(width)))
+                let mut layout =
+                    row.layout(width, expanded, chat_widget.active_auxiliary_lines(width));
+                if let Some(protocol) = protocol {
+                    for data in chat_widget.active_cell_image_data() {
+                        if let Some(image) = crate::transcript_image::TranscriptImage::from_data(
+                            &data, width, protocol,
+                        ) {
+                            layout.add_attached_image(image);
+                        }
+                    }
+                }
+                Some(layout)
             })
         } else {
             view.sync_live_activity_tail(transcript_width, active_key, expanded, |width| {

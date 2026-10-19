@@ -495,6 +495,7 @@ fn activity_focus_keeps_controls_without_passive_hints() {
                 },
                 auxiliary: Vec::new(),
                 disclosure: cell.activity_disclosure(width),
+                images: Vec::new(),
             })
         });
         render(view, &[])
