@@ -671,7 +671,6 @@ pub struct Tui {
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
-    pub(crate) transcript_images: Vec<crate::transcript_image::ImagePlacement>,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
@@ -754,7 +753,6 @@ impl Tui {
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
-            transcript_images: Vec::new(),
             alt_saved_viewport: None,
             #[cfg(unix)]
             suspend_context: SuspendContext::new().with_terminal_status(terminal_status.clone()),
@@ -900,6 +898,7 @@ impl Tui {
 
     /// Reclaim terminal modes and stderr after a panic hook ran inside a recovery boundary.
     pub(crate) fn recover_after_caught_panic(&mut self) -> Result<()> {
+        self.terminal.forget_transcript_images();
         set_modes()?;
         self._stderr_guard.recover_after_caught_panic()?;
         self.terminal.invalidate_cursor_state();
@@ -1002,6 +1001,8 @@ impl Tui {
         }
 
         let output = f().await;
+
+        self.terminal.forget_transcript_images();
 
         if was_alt_screen && matches!(handoff, TerminalHandoff::KeepScreen) {
             // The editor may already have left the alternate screen. Return to the main screen
@@ -1123,6 +1124,7 @@ impl Tui {
         if !self.alt_screen_enabled {
             return Ok(());
         }
+        let image_result = self.terminal.reset_transcript_images();
         // Entry can change buffers before later input-mode configuration fails.
         self.terminal.invalidate_cursor_state();
         if self.owned_screen {
@@ -1134,6 +1136,7 @@ impl Tui {
             self.terminal.backend_mut(),
             self.overlay_input.captures_mouse(self.owned_screen),
         );
+        let result = image_result.and(result);
         self.alt_screen_active
             .store(ALTERNATE_SCREEN.is_active(), Ordering::Relaxed);
         if !self.is_alt_screen_active() {
@@ -1173,7 +1176,9 @@ impl Tui {
         if !self.alt_screen_enabled || !self.is_alt_screen_active() {
             return Ok(());
         }
+        let image_result = self.terminal.reset_transcript_images();
         let result = ALTERNATE_SCREEN.leave(self.terminal.backend_mut());
+        let result = image_result.and(result);
         if ALTERNATE_SCREEN.is_active() {
             return result;
         }
@@ -1409,7 +1414,7 @@ impl Tui {
                 self.suspend_context.set_cursor_y(inline_area_bottom);
             }
 
-            terminal.draw_with_size(screen_size, &mut self.transcript_images, draw_fn)
+            terminal.draw_with_size(screen_size, draw_fn)
         })??;
         Ok(())
     }
@@ -1545,7 +1550,7 @@ impl Tui {
                 self.suspend_context.set_cursor_y(inline_area_bottom);
             }
 
-            terminal.draw_with_size(screen_size, &mut self.transcript_images, |frame| {
+            terminal.draw_with_size(screen_size, |frame| {
                 draw_fn(frame);
             })
         })??;

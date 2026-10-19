@@ -223,6 +223,7 @@ fn mermaid_images_rewrap_and_clip_while_scrolling() {
     let clipped = view.image_placements();
     assert_eq!(clipped.len(), 1);
     let placement = &clipped[0];
+    assert!(Arc::ptr_eq(&placements[0].image, &placement.image));
     assert!(placement.first_row > 1);
     assert!(short.contains(placement.area.as_position()));
     assert!(placement.area.right() <= short.right());
@@ -233,4 +234,8 @@ fn mermaid_images_rewrap_and_clip_while_scrolling() {
         view.image_placements()[0].first_row + 1,
         placement.first_row,
     );
+    assert!(Arc::ptr_eq(
+        &placement.image,
+        &view.image_placements()[0].image,
+    ));
 }

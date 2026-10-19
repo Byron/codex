@@ -1,11 +1,12 @@
 //! Bounded image previews for the owned fullscreen transcript.
 //!
 //! Only decoded or generated image pixels reach the terminal encoders. Previews are never source text;
-//! their reserved rows belong to layout. The terminal retains visible placements and any local
-//! transport files until those placements change.
+//! their reserved rows belong to layout. Uploaded pixels and local transport files survive
+//! placement changes, so scrolling only updates the terminal's crop and position.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
@@ -14,19 +15,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::cursor::RestorePosition;
 use crossterm::cursor::SavePosition;
 use crossterm::queue;
 use image::DynamicImage;
-use image::ImageFormat;
 use image::RgbaImage;
 use ratatui::layout::Rect;
 
 use crate::pets::ImageProtocol;
 
+mod kitty;
 pub(crate) mod svg;
+pub(crate) mod terminal;
 
 const MAX_INPUT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PIXELS: u32 = 4 * 1024 * 1024;
@@ -117,11 +118,11 @@ thread_local! {
 // Separate from the two image ids reserved for pets (0xC0DE and 0xC0DF).
 pub(crate) const FIRST_IMAGE_ID: u32 = 0xC100;
 
+#[derive(Debug)]
 pub(crate) struct ImagePlacement {
     pub(crate) image: Arc<TranscriptImage>,
     pub(crate) area: Rect,
     pub(crate) first_row: usize,
-    pub(crate) file: Option<tempfile::NamedTempFile>,
 }
 
 impl PartialEq for ImagePlacement {
@@ -132,6 +133,7 @@ impl PartialEq for ImagePlacement {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct TranscriptImage {
     pub(crate) protocol: ImageProtocol,
     pub(crate) columns: u16,
@@ -259,63 +261,27 @@ impl TranscriptImage {
         })
     }
 
-    /// Draw only the visible vertical slice, never covering the prompt header or composer.
-    pub(crate) fn draw(
-        &self,
-        writer: &mut impl Write,
-        area: Rect,
-        first_row: usize,
-        id: u32,
-    ) -> Result<Option<tempfile::NamedTempFile>> {
-        let (top, bottom) = match self.protocol {
-            ImageProtocol::Sixel => (
-                first_row as u32 * self.cell_height,
-                (first_row as u32 + u32::from(area.height)) * self.cell_height,
-            ),
-            // Kitty scales the entire raster to r=rows; clip at those scaled boundaries.
-            ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => (
-                first_row as u32 * self.pixels.height() / u32::from(self.rows),
-                (first_row as u32 + u32::from(area.height)) * self.pixels.height()
-                    / u32::from(self.rows),
-            ),
-        };
-        let top = top.min(self.pixels.height());
-        let height = bottom.min(self.pixels.height()) - top;
-        if height == 0 {
-            return Ok(None);
+    /// Sixel has no retained-image placement commands, so redraw its visible pixels.
+    fn draw_sixel(&self, writer: &mut impl Write, area: Rect, first_row: usize) -> io::Result<()> {
+        let first_row = first_row.min(usize::from(self.rows)) as u32;
+        let top = (first_row * self.cell_height).min(self.pixels.height());
+        let bottom =
+            ((first_row + u32::from(area.height)) * self.cell_height).min(self.pixels.height());
+        let height = bottom - top;
+        if height == 0 || area.is_empty() {
+            return Ok(());
         }
         let cropped =
             image::imageops::crop_imm(&self.pixels, 0, top, self.pixels.width(), height).to_image();
-        let mut file = None;
-        // Encoding and temp-file failures must not abort the TUI. Only writes to the actual
-        // terminal below are fatal; the existing text entry remains usable without its preview.
-        let payload = (|| -> Result<_> {
-            Ok(match self.protocol {
-                ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => {
-                    let mut png = tempfile::Builder::new().suffix(".png").tempfile()?;
-                    DynamicImage::ImageRgba8(cropped).write_to(&mut png, ImageFormat::Png)?;
-                    png.flush()?;
-                    let transmit = if self.protocol == ImageProtocol::KittyLocalFile {
-                        crate::pets::kitty_transmit_png_file_with_id
-                    } else {
-                        crate::pets::kitty_transmit_png_with_id
-                    };
-                    let command = transmit(png.path(), self.columns, area.height, Some(id))?;
-                    file = (self.protocol == ImageProtocol::KittyLocalFile).then_some(png);
-                    command.into_bytes()
-                }
-                ImageProtocol::Sixel => {
-                    crate::pets::encode_rgba(cropped.as_raw(), cropped.width(), cropped.height())?
-                }
-            })
-        })();
-        let Ok(payload) = payload else {
-            return Ok(None);
+        // Asset failures preserve the text fallback; only terminal writes are fatal.
+        let Ok(payload) =
+            crate::pets::encode_rgba(cropped.as_raw(), cropped.width(), cropped.height())
+        else {
+            return Ok(());
         };
         queue!(writer, SavePosition, MoveTo(area.x, area.y))?;
         writer.write_all(&payload)?;
-        queue!(writer, RestorePosition)?;
-        Ok(file)
+        queue!(writer, RestorePosition)
     }
 }
 
@@ -367,6 +333,7 @@ fn fitted_size(width: f32, height: f32, max_width: u32, max_height: u32) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::ImageFormat;
     use pretty_assertions::assert_eq;
 
     fn png(width: u32, height: u32) -> Vec<u8> {
