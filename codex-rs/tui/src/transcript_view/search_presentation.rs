@@ -113,8 +113,8 @@ impl TranscriptView {
             self.search.current = current;
             layout?
         };
-        let layout = if layout.has_mermaid_images() {
-            Arc::new(layout.without_mermaid_images())
+        let layout = if layout.has_inline_images() {
+            Arc::new(layout.without_inline_images())
         } else {
             layout
         };

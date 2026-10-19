@@ -5,6 +5,7 @@ codex_rust_crate(
     binaries_with_build_commit = ["codex-tui"],
     compile_data = glob([
         "assets/**",
+        "tests/fixtures/graphviz.svg",
     ]),
     crate_name = "codex_tui",
     extra_binaries = [
