@@ -48,7 +48,6 @@ fn preview_at(protocol: ImageProtocol, y: u16) -> ImagePlacement {
         }),
         area: Rect::new(/*x*/ 0, y, /*width*/ 2, /*height*/ 1),
         first_row: 0,
-        file: None,
     }
 }
 
@@ -60,7 +59,7 @@ fn inline_history_erases_preview_before_scrolling_and_preserves_draft() {
     let mut terminal = inline_terminal(viewport);
     let size = terminal.last_known_screen_size;
     terminal
-        .draw_with_size(size, &mut Vec::new(), |frame| {
+        .draw_with_size(size, |frame| {
             Line::from("unsent [Image #1]").render(
                 Rect::new(
                     /*x*/ 0, /*y*/ 7, /*width*/ 32, /*height*/ 1,
@@ -77,18 +76,17 @@ fn inline_history_erases_preview_before_scrolling_and_preserves_draft() {
         Print("stale preview pixels")
     )
     .unwrap();
-    let mut retained = vec![preview_at(ImageProtocol::Sixel, viewport.top())];
+    terminal.transcript_images.placements = vec![preview_at(ImageProtocol::Sixel, viewport.top())];
     // Unrelated frames must not evict an otherwise unchanged preview.
     Tui::flush_pending_history_lines(
         &mut terminal,
         &mut Vec::new(),
-        &mut retained,
         ScrollbackStrategy::Standard,
         size,
     )
     .unwrap();
-    assert_eq!(retained.len(), 1);
-    let preview = retained[0].registration();
+    assert_eq!(terminal.transcript_images.placements.len(), 1);
+    let preview = terminal.transcript_images.placements[0].registration();
     let before_flush = terminal.backend().writer().len();
     let mut history = vec![PendingHistoryLines {
         lines: plain_hyperlink_lines(
@@ -101,12 +99,11 @@ fn inline_history_erases_preview_before_scrolling_and_preserves_draft() {
     Tui::flush_pending_history_lines(
         &mut terminal,
         &mut history,
-        &mut retained,
         ScrollbackStrategy::Standard,
         size,
     )
     .unwrap();
-    assert!(retained.is_empty());
+    assert!(terminal.transcript_images.placements.is_empty());
     assert!(history.is_empty());
     let output = terminal.backend().writer();
     let flush = String::from_utf8_lossy(&output[before_flush..]);
@@ -126,7 +123,7 @@ fn inline_history_erases_preview_before_scrolling_and_preserves_draft() {
     assert!(contents.contains("unsent [Image #1]"), "{contents}");
     insta::assert_snapshot!(contents);
     terminal
-        .draw_with_size(size, &mut retained, |frame| {
+        .draw_with_size(size, |frame| {
             Line::from("unsent [Image #1]").render(
                 Rect::new(
                     /*x*/ 0, /*y*/ 7, /*width*/ 32, /*height*/ 1,
@@ -136,7 +133,7 @@ fn inline_history_erases_preview_before_scrolling_and_preserves_draft() {
             frame.image_placements.push(preview);
         })
         .unwrap();
-    assert_eq!(retained.len(), 1);
+    assert_eq!(terminal.transcript_images.placements.len(), 1);
     assert!(String::from_utf8_lossy(terminal.backend().writer()).contains("\x1bP"));
 }
 
@@ -154,19 +151,17 @@ fn kitty_history_output(
         placement.area.y = frame.area().top();
         frame.image_placements.push(placement);
     };
-    let mut retained = Vec::new();
-    terminal.draw_with_size(size, &mut retained, draw).unwrap();
+    terminal.draw_with_size(size, draw).unwrap();
     let output = terminal.backend().writer();
-    assert!(String::from_utf8_lossy(output).contains("_Ga=T,"));
+    assert!(String::from_utf8_lossy(output).contains("_Ga=t,"));
     let before_flush = output.len();
     let mut history = vec![PendingHistoryLines {
         lines: plain_hyperlink_lines(vec![Line::from("streamed response")]),
         wrap_policy: HistoryLineWrapPolicy::PreWrap,
     }];
-    Tui::flush_pending_history_lines(&mut terminal, &mut history, &mut retained, scrollback, size)
-        .unwrap();
+    Tui::flush_pending_history_lines(&mut terminal, &mut history, scrollback, size).unwrap();
     let before_draw = terminal.backend().writer().len();
-    terminal.draw_with_size(size, &mut retained, draw).unwrap();
+    terminal.draw_with_size(size, draw).unwrap();
     let output = terminal.backend().writer();
     (
         String::from_utf8_lossy(&output[before_flush..before_draw]).into_owned(),
@@ -201,8 +196,8 @@ fn iterm2_file_preview_is_deleted_before_history_and_uploaded_on_the_next_draw()
         .expect("history scroll region");
     let delete = crate::pets::kitty_delete_image(crate::transcript_image::FIRST_IMAGE_ID);
     assert!(before_history.contains(&delete), "{flush:?}");
-    assert!(!flush.contains("_Ga=T,"), "{flush:?}");
-    assert!(redraw.contains("_Ga=T,t=f,"), "{redraw:?}");
+    assert!(!flush.contains("_Ga=t,"), "{flush:?}");
+    assert!(redraw.contains("_Ga=t,t=f,"), "{redraw:?}");
 }
 
 #[test]
@@ -234,7 +229,7 @@ fn direct_kitty_preview_is_repainted_when_history_can_move_the_viewport() {
             "{viewport:?} {scrollback:?}: {flush:?}"
         );
         assert!(
-            redraw.contains("_Ga=T,t=d,"),
+            redraw.contains("_Ga=t,t=d,"),
             "{viewport:?} {scrollback:?}: {redraw:?}"
         );
     }
