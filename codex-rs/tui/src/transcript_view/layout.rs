@@ -18,6 +18,7 @@ pub(crate) struct ActivityTranscriptLines {
     pub(crate) activity: Vec<HyperlinkLine>,
     pub(crate) auxiliary: Vec<HyperlinkLine>,
     pub(crate) disclosure: Option<ActivityDisclosure>,
+    pub(crate) images: Vec<Arc<[u8]>>,
 }
 
 /// Keep disclosure controls outside selectable source without rendering hidden details.
@@ -103,6 +104,7 @@ pub(super) struct CellPresentation {
     disclosure: bool,
     detailed: bool,
     image_protocol: Option<crate::pets::ImageProtocol>,
+    embedded_image_protocol: Option<crate::pets::ImageProtocol>,
     mermaid_protocol: Option<crate::pets::ImageProtocol>,
 }
 
@@ -199,6 +201,9 @@ impl TranscriptView {
             image_protocol: self
                 .image_protocol
                 .filter(|_| mode == HistoryRenderMode::Rich && reveal_image),
+            embedded_image_protocol: self
+                .embedded_image_protocol
+                .filter(|_| mode == HistoryRenderMode::Rich && reveal_image),
             mermaid_protocol: self
                 .mermaid_image_protocol
                 .filter(|_| mode == HistoryRenderMode::Rich),
@@ -218,6 +223,7 @@ impl TranscriptView {
                         },
                         auxiliary: Vec::new(),
                         disclosure: cell.activity_disclosure(width),
+                        images: Vec::new(),
                     },
                     width,
                     expanded,
@@ -236,13 +242,25 @@ impl TranscriptView {
             };
             if let Some(protocol) = presentation.image_protocol
                 && let Some(path) = cell.image_path()
-            {
-                layout.image =
+                && let Some(image) =
                     crate::transcript_image::TranscriptImage::load(path.as_path(), width, protocol)
-                        .map(Arc::new);
+            {
+                layout.add_attached_image(image);
+            }
+            if let Some(protocol) = presentation.embedded_image_protocol {
+                for data in cell.image_data() {
+                    if let Some(image) =
+                        crate::transcript_image::TranscriptImage::from_data(&data, width, protocol)
+                    {
+                        layout.add_attached_image(image);
+                    }
+                }
             }
             if let Some(protocol) = presentation.mermaid_protocol {
                 layout = layout.with_mermaid_images(protocol);
+            }
+            if let Some(protocol) = presentation.image_protocol {
+                layout = layout.with_markdown_images(protocol);
             }
             layout
         }))

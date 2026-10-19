@@ -166,6 +166,7 @@ fn terminal_output_disclosure_follows_live_history_and_keymap() {
                 activity: cell.compact_hyperlink_lines(width),
                 auxiliary: Vec::new(),
                 disclosure: cell.activity_disclosure(width),
+                images: Vec::new(),
             })
         },
     );

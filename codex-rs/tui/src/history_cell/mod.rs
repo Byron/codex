@@ -94,6 +94,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use unicode_segmentation::UnicodeSegmentation;
@@ -227,6 +228,11 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     /// A local artifact the owned fullscreen viewport may preview. Text surfaces ignore it.
     fn image_path(&self) -> Option<AbsolutePathBuf> {
         None
+    }
+
+    /// Encoded tool-result images the owned fullscreen viewport may preview.
+    fn image_data(&self) -> Vec<Arc<[u8]>> {
+        Vec::new()
     }
 
     /// Raw live presentation may omit transcript-only diagnostics without losing their source.

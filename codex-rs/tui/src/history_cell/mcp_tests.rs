@@ -394,10 +394,64 @@ fn projected_image_marker_still_requires_a_complete_image() {
 
     let projected = McpToolResult::new(result(vec![invalid.clone()]), McpResultKind::Standard);
     assert!(!projected.has_image);
+    assert!(projected.images.is_empty());
     assert_eq!(projected.content[0].render(), "Returned image");
 
     let projected = McpToolResult::new(result(vec![invalid, valid]), McpResultKind::Standard);
     assert!(projected.has_image);
+    assert_eq!(projected.images.len(), 1);
+    assert_eq!(projected.images[0].as_ref(), bytes);
+}
+
+#[test]
+fn tool_images_are_bounded_and_retained_without_changing_text() {
+    let mut cell = new_active_mcp_tool_call(
+        "images".into(),
+        McpInvocation {
+            server: "plots".into(),
+            tool: "render".into(),
+            arguments: None,
+        },
+        /*animations_enabled*/ false,
+    );
+    assert!(cell.image_data().is_empty());
+    let image = json!({"type": "image", "mimeType": "image/png", "data": PNG});
+    cell.complete(
+        Duration::ZERO,
+        Ok(result(vec![image; result::MAX_IMAGES + 1])),
+    );
+    let images = cell.image_data();
+    assert_eq!(images.len(), result::MAX_IMAGES);
+    assert!(Arc::ptr_eq(&images[0], &cell.image_data()[0]));
+    assert_eq!(
+        cell.raw_lines()
+            .iter()
+            .filter(|line| line.to_string() == "Returned image")
+            .count(),
+        result::MAX_IMAGES + 1,
+    );
+    cell.mark_failed();
+    assert!(cell.image_data().is_empty());
+}
+
+#[test]
+fn mcp_images_retain_svg_and_raster_payloads_in_order() {
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><rect width="64" height="32" fill="green"/></svg>"#;
+    let svg_data = base64::engine::general_purpose::STANDARD.encode(svg);
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(PNG)
+        .unwrap();
+    let projected = McpToolResult::new(
+        result(vec![
+            json!({"type": "image", "mimeType": "image/svg+xml", "data": svg_data}),
+            json!({"type": "image", "mimeType": "image/png", "data": PNG}),
+        ]),
+        McpResultKind::Standard,
+    );
+    assert!(projected.has_image);
+    assert_eq!(projected.images.len(), 2);
+    assert_eq!(projected.images[0].as_ref(), svg.as_bytes());
+    assert_eq!(projected.images[1].as_ref(), png_bytes);
 }
 
 #[test]

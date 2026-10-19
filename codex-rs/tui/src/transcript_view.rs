@@ -90,6 +90,7 @@ struct VisibleRow {
 /// Shared scrolling and interaction state for compact and detailed transcript presentations.
 pub(crate) struct TranscriptView {
     pub(crate) image_protocol: Option<crate::pets::ImageProtocol>,
+    pub(crate) embedded_image_protocol: Option<crate::pets::ImageProtocol>,
     mermaid_image_protocol: Option<crate::pets::ImageProtocol>,
     pub(crate) mouse_scroll_speed: f64,
     pending_mouse_scroll: f64,
@@ -105,7 +106,7 @@ pub(crate) struct TranscriptView {
     live: Option<Arc<TextLayout>>,
     live_separated: Option<Arc<TextLayout>>,
     live_key: Option<(u16, ActiveCellTranscriptKey)>,
-    live_image_state: Option<(Option<crate::pets::ImageProtocol>, layout::RenderState)>,
+    live_image_state: Option<([Option<crate::pets::ImageProtocol>; 3], layout::RenderState)>,
     live_continuation: bool,
     area: Rect,
     prompt_header_target: Option<(Rect, EntryKey)>,
@@ -132,6 +133,7 @@ impl Default for TranscriptView {
     fn default() -> Self {
         Self {
             image_protocol: None,
+            embedded_image_protocol: None,
             mermaid_image_protocol: None,
             mouse_scroll_speed: 1.0,
             pending_mouse_scroll: 0.0,
@@ -363,8 +365,23 @@ impl TranscriptView {
             .disclosure
             .keymap
             .primary_hint(crate::keymap::KeymapContext::Global, "open_transcript");
+        let protocol = self
+            .embedded_image_protocol
+            .filter(|_| self.mode == HistoryRenderMode::Rich && (expanded || self.detailed));
         self.sync_live_layout(width, key, |width| {
-            lines(width).map(|lines| layout::activity_layout(lines, width, expanded, shortcut))
+            let mut lines = lines(width)?;
+            let images = std::mem::take(&mut lines.images);
+            let mut layout = layout::activity_layout(lines, width, expanded, shortcut);
+            if let Some(protocol) = protocol {
+                for data in images {
+                    if let Some(image) =
+                        crate::transcript_image::TranscriptImage::from_data(&data, width, protocol)
+                    {
+                        layout.add_attached_image(image);
+                    }
+                }
+            }
+            Some(layout)
         })
     }
 
@@ -374,7 +391,14 @@ impl TranscriptView {
         key: Option<ActiveCellTranscriptKey>,
         layout: impl FnOnce(u16) -> Option<TextLayout>,
     ) -> bool {
-        let image_state = (self.mermaid_image_protocol, layout::RenderState::current());
+        let image_state = (
+            [
+                self.mermaid_image_protocol,
+                self.image_protocol,
+                self.embedded_image_protocol,
+            ],
+            layout::RenderState::current(),
+        );
         if self.live_image_state.as_ref() != Some(&image_state) {
             self.live_key = None;
             self.live_image_state = Some(image_state);
@@ -389,9 +413,15 @@ impl TranscriptView {
         self.live_separated = None;
         self.live_continuation = key.is_some_and(|key| key.is_stream_continuation);
         let live = layout(width).map(|layout| {
-            Arc::new(match self.mermaid_image_protocol {
+            let layout = match self.mermaid_image_protocol {
                 Some(protocol) if self.mode == HistoryRenderMode::Rich => {
                     layout.with_mermaid_images(protocol)
+                }
+                _ => layout,
+            };
+            Arc::new(match self.image_protocol {
+                Some(protocol) if self.mode == HistoryRenderMode::Rich => {
+                    layout.with_markdown_images(protocol)
                 }
                 _ => layout,
             })
@@ -735,3 +765,11 @@ mod copy_on_select_tests;
 #[cfg(test)]
 #[path = "transcript_view/mermaid_tests.rs"]
 mod mermaid_tests;
+
+#[cfg(test)]
+#[path = "transcript_view/tool_image_tests.rs"]
+mod tool_image_tests;
+
+#[cfg(test)]
+#[path = "transcript_view/markdown_image_tests.rs"]
+mod markdown_image_tests;

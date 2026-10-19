@@ -74,6 +74,7 @@ use ratatui::text::Text;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 mod inline_directives;
 mod list_spacing;
@@ -96,6 +97,9 @@ use local_links::is_local_path_like_link;
 use local_links::render_local_link_target;
 pub(crate) use streaming::StreamingMarkdownRender;
 pub(crate) use streaming::render_streaming_markdown_lines_with_width_and_cwd;
+#[cfg(test)]
+#[path = "markdown_render/image_tests.rs"]
+mod image_tests;
 #[cfg(test)]
 #[path = "markdown_render/list_spacing_tests.rs"]
 mod list_spacing_tests;
@@ -450,6 +454,41 @@ struct LinkState {
     local_target_display: Option<String>,
     local_label_spans: Vec<Span<'static>>,
     local_label_inline: Vec<Vec<crate::markdown_copy::Inline>>,
+    local_label_images: Vec<(usize, Arc<PathBuf>)>,
+}
+
+struct ImageState {
+    path: Option<Arc<PathBuf>>,
+    has_visible_label: bool,
+}
+
+fn local_image_path(destination: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    if destination.is_empty() {
+        return None;
+    }
+    let path = if let Ok(url) = url::Url::parse(destination) {
+        if url.scheme() == "file" && url.host_str().is_none_or(|host| host == "localhost") {
+            url.to_file_path().ok()?
+        } else {
+            // Windows drive paths are parsed as URL schemes; accept them only on Windows.
+            let path = PathBuf::from(urlencoding::decode(destination).ok()?.as_ref());
+            path.is_absolute().then_some(path)?
+        }
+    } else {
+        if destination.contains("://") {
+            return None;
+        }
+        PathBuf::from(urlencoding::decode(destination).ok()?.as_ref())
+    };
+    let text = path.to_string_lossy();
+    if text.starts_with("//") || text.starts_with("\\\\") {
+        return None;
+    }
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        cwd.map(|cwd| cwd.join(path))
+    }
 }
 
 fn should_render_link_destination(dest_url: &str) -> bool {
@@ -481,6 +520,7 @@ struct Writer<'a, 'policy> {
     list_spacing: ListSpacing,
     uniform_lists: Vec<UniformList>,
     link: Option<LinkState>,
+    images: Vec<ImageState>,
     needs_newline: bool,
     pending_marker_line: bool,
     last_task_marker_end: usize,
@@ -526,6 +566,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             list_spacing: ListSpacing::default(),
             uniform_lists: Vec::new(),
             link: None,
+            images: Vec::new(),
             needs_newline: false,
             pending_marker_line: false,
             last_task_marker_end: 0,
@@ -577,6 +618,11 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             self.transformed_code_source = source;
         }
         self.prepare_for_event(&event);
+        if matches!(&event, Event::Text(text) | Event::Code(text) if !text.trim().is_empty()) {
+            for image in &mut self.images {
+                image.has_visible_label = true;
+            }
+        }
         let copy_inline = crate::markdown_copy::Inline::from_event(&event);
         if let Some(inline) = &copy_inline {
             self.copy_inline.push(inline.clone());
@@ -719,14 +765,15 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
             Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Image { dest_url, .. } => self.images.push(ImageState {
+                path: local_image_path(&dest_url, self.cwd.as_deref()).map(Arc::new),
+                has_visible_label: false,
+            }),
             Tag::Table(alignments) => self.start_table(alignments),
             Tag::TableHead => self.start_table_head(),
             Tag::TableRow => self.start_table_row(range),
             Tag::TableCell => self.start_table_cell(),
-            Tag::HtmlBlock
-            | Tag::FootnoteDefinition(_)
-            | Tag::Image { .. }
-            | Tag::MetadataBlock(_) => {}
+            Tag::HtmlBlock | Tag::FootnoteDefinition(_) | Tag::MetadataBlock(_) => {}
         }
     }
 
@@ -771,14 +818,46 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
             TagEnd::Link => self.pop_link(),
+            TagEnd::Image => self.end_image(),
             TagEnd::Table => self.end_table(),
             TagEnd::TableHead => self.end_table_head(),
             TagEnd::TableRow => self.end_table_row(),
             TagEnd::TableCell => self.end_table_cell(),
-            TagEnd::HtmlBlock
-            | TagEnd::FootnoteDefinition
-            | TagEnd::Image
-            | TagEnd::MetadataBlock(_) => {}
+            TagEnd::HtmlBlock | TagEnd::FootnoteDefinition | TagEnd::MetadataBlock(_) => {}
+        }
+    }
+
+    fn end_image(&mut self) {
+        let Some(image) = self.images.pop() else {
+            return;
+        };
+        let Some(path) = image.path else {
+            return;
+        };
+        // shortcut: table cells keep alt text until table layout can reserve image rows.
+        if self.in_table_cell() {
+            return;
+        }
+        let empty_anchor = !self.collecting_local_link_label()
+            && self
+                .current_line_content
+                .as_ref()
+                .is_none_or(|line| line.line.spans.iter().all(|span| span.content.is_empty()));
+        if !image.has_visible_label || empty_anchor {
+            self.text("Image".into());
+        }
+        if self.collecting_local_link_label() {
+            if let Some(link) = &mut self.link {
+                let end = link
+                    .local_label_spans
+                    .iter()
+                    .map(|span| span.content.len())
+                    .sum();
+                link.local_label_images.push((end, path));
+            }
+        } else if let Some(line) = &self.current_line_content {
+            let end = line.line.spans.iter().map(|span| span.content.len()).sum();
+            self.copy_line.images.push((end, path));
         }
     }
 
@@ -2201,6 +2280,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             },
             local_label_spans: Vec::new(),
             local_label_inline: Vec::new(),
+            local_label_images: Vec::new(),
             destination: dest_url,
         });
     }
@@ -2275,6 +2355,9 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                         self.push_line(Line::default());
                     }
                     if show_label {
+                        let start: usize = self.current_line_content.as_ref().map_or(0, |line| {
+                            line.line.spans.iter().map(|span| span.content.len()).sum()
+                        });
                         for (label_span, inline) in link
                             .local_label_spans
                             .into_iter()
@@ -2284,6 +2367,11 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                             self.push_span(label_span);
                             self.copy_inline = previous;
                         }
+                        self.copy_line.images.extend(
+                            link.local_label_images
+                                .into_iter()
+                                .map(|(end, path)| (start + end, path)),
+                        );
                         self.push_span(" (".into());
                     }
                     self.copy_inline.push(crate::markdown_copy::Inline::Literal);

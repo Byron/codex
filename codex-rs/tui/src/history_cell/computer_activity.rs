@@ -36,6 +36,7 @@ impl ComputerActivityCell {
     /// Prepend validated historical calls without recreating pending live calls or their clocks.
     pub(crate) fn prepend(&mut self, older: Self) {
         self.group.prepend(older.group);
+        self.retain_recent_images();
     }
 
     pub(crate) fn start(&mut self, call: McpToolCallCell) {
@@ -46,6 +47,7 @@ impl ComputerActivityCell {
             .any(|existing| existing.call_id == call.call_id)
         {
             self.group.calls.push(call);
+            self.retain_recent_images();
         }
     }
 
@@ -60,6 +62,28 @@ impl ComputerActivityCell {
         self.start(call);
         if let Some(call) = self.group.calls.iter_mut().find(|call| call.call_id == id) {
             call.complete(duration, result);
+            self.retain_recent_images();
+        }
+    }
+
+    /// Keep a long computer session from retaining every full-resolution screenshot.
+    fn retain_recent_images(&mut self) {
+        let mut images_remaining = result::MAX_IMAGES;
+        let mut bytes_remaining = result::MAX_IMAGE_BYTES;
+        for call in self.group.calls.iter_mut().rev() {
+            let Some(Ok(result)) = &mut call.result else {
+                continue;
+            };
+            result.images.reverse();
+            result.images.retain(|image| {
+                if images_remaining == 0 || image.len() > bytes_remaining {
+                    return false;
+                }
+                images_remaining -= 1;
+                bytes_remaining -= image.len();
+                true
+            });
+            result.images.reverse();
         }
     }
 
@@ -119,6 +143,14 @@ fn error_preview(call: &McpToolCallCell) -> Option<&str> {
 }
 
 impl HistoryCell for ComputerActivityCell {
+    fn image_data(&self) -> Vec<Arc<[u8]>> {
+        self.group
+            .calls
+            .iter()
+            .flat_map(HistoryCell::image_data)
+            .collect()
+    }
+
     fn append_reasoning(&mut self, cell: Box<dyn HistoryCell>) -> Result<(), Box<dyn HistoryCell>> {
         if self.group.calls.is_empty() {
             Err(cell)

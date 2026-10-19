@@ -80,6 +80,7 @@ impl App {
         let chat_widget = &self.chat_widget;
         let transcript_width = chat_widget.history_wrap_width(width);
         let view = &mut self.transcript_view;
+        view.embedded_image_protocol = chat_widget.pet_image_support().protocol();
         view.image_protocol = chat_widget.pet_image_support().protocol().filter(|_| {
             !self.app_server_target.uses_remote_workspace()
                 && crate::projectless::has_only_local_environments(&self.environment_manager)
@@ -103,9 +104,19 @@ impl App {
             chat_widget.active_cell_transcript_hyperlink_lines(width)
         });
         let changed = if detailed {
-            view.sync_live_tail(transcript_width, active_key, |width| {
-                chat_widget.active_cell_transcript_hyperlink_lines(width)
-            })
+            view.sync_live_activity_tail(
+                transcript_width,
+                active_key,
+                /*expanded*/ false,
+                |width| {
+                    Some(crate::transcript_view::ActivityTranscriptLines {
+                        activity: chat_widget.active_cell_transcript_hyperlink_lines(width)?,
+                        auxiliary: Vec::new(),
+                        disclosure: None,
+                        images: chat_widget.active_cell_image_data(),
+                    })
+                },
+            )
         } else {
             view.sync_live_activity_tail(transcript_width, active_key, expanded, |width| {
                 chat_widget.active_cell_owned_transcript_lines(width, expanded)

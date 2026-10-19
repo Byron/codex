@@ -6,6 +6,7 @@
 //! rather than reproducing the complete response's source spelling (available through `/copy`).
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pulldown_cmark::Event;
@@ -104,6 +105,8 @@ pub(crate) struct CopyLine {
     pub(crate) code_source: Option<Arc<str>>,
     /// A completed, enabled Mermaid fence eligible for graphical rendering.
     pub(crate) mermaid: bool,
+    /// Local image paths anchored immediately after their alt text in rendered-byte coordinates.
+    pub(crate) images: Vec<(usize, Arc<PathBuf>)>,
     /// Outer quote source, retained even when it contains only code.
     pub(crate) quote_source: Option<Arc<str>>,
     pub(crate) table: Option<table::TableLine>,

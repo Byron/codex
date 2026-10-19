@@ -903,10 +903,9 @@ mod tests {
             crate::pets::ImageProtocol::Kitty,
             crate::pets::ImageProtocol::KittyLocalFile,
         ] {
-            let image = std::sync::Arc::new(
+            let image =
                 crate::transcript_image::TranscriptImage::load(&path, /*width*/ 40, protocol)
-                    .unwrap(),
-            );
+                    .unwrap();
             let mut terminal =
                 Terminal::with_options(CaptureBackend::new(/*width*/ 40, /*height*/ 12)).unwrap();
             let size = terminal.last_known_screen_size;

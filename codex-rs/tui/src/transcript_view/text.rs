@@ -45,9 +45,10 @@ use ratatui::text::Line;
 
 /// One cell's logical text and its width-dependent display rows.
 pub(super) struct TextLayout {
-    pub(super) image: Option<std::sync::Arc<crate::transcript_image::TranscriptImage>>,
+    pub(super) attached_images: Vec<std::sync::Arc<crate::transcript_image::TranscriptImage>>,
     inline_images: Vec<images::InlineImage>,
     mermaid_protocol: Option<crate::pets::ImageProtocol>,
+    markdown_image_protocol: Option<crate::pets::ImageProtocol>,
     logical: Vec<LogicalLine>,
     text: String,
     rows: Vec<TextRow>,
@@ -138,19 +139,27 @@ impl TextLayout {
 
     /// Reflow the same displayed content revision, retaining styles, links and disclosure label.
     pub(super) fn rewrap(&self, width: u16) -> Self {
-        self.reflow(width, self.mermaid_protocol)
+        self.reflow(width, self.mermaid_protocol, self.markdown_image_protocol)
     }
 
-    fn reflow(&self, width: u16, protocol: Option<crate::pets::ImageProtocol>) -> Self {
+    fn reflow(
+        &self,
+        width: u16,
+        protocol: Option<crate::pets::ImageProtocol>,
+        markdown_image_protocol: Option<crate::pets::ImageProtocol>,
+    ) -> Self {
         let mut layout = Self::from_logical(self.logical.clone(), width);
+        layout.attached_images = self.attached_images.clone();
         if let Some(protocol) = protocol {
             layout = layout.with_mermaid_images(protocol);
+        }
+        if let Some(protocol) = markdown_image_protocol {
+            layout = layout.with_markdown_images(protocol);
         }
         if let Some(control) = &self.disclosure_control {
             layout =
                 layout.with_disclosure_control_at(control.label.clone(), control.source_offset);
         }
-        layout.image = self.image.clone();
         if self.separated {
             layout.with_leading_separator()
         } else {
@@ -301,18 +310,19 @@ impl TextLayout {
         // Images occupy visual space, but have no searchable or selectable text rows.
         self.text_row_count()
             + self
-                .visible_image()
-                .map_or(0, |image| usize::from(image.rows))
+                .visible_attached_images()
+                .map(|image| usize::from(image.rows))
+                .sum::<usize>()
     }
 
     pub(super) fn text_row_count(&self) -> usize {
         self.rows.len()
     }
 
-    pub(super) fn visible_image(
+    pub(super) fn visible_attached_images(
         &self,
-    ) -> Option<&std::sync::Arc<crate::transcript_image::TranscriptImage>> {
-        self.image.as_ref().filter(|image| {
+    ) -> impl Iterator<Item = &std::sync::Arc<crate::transcript_image::TranscriptImage>> {
+        self.attached_images.iter().filter(|image| {
             image.columns + 2 <= self.width
                 && (image.protocol != crate::pets::ImageProtocol::Sixel
                     || crate::transcript_image::terminal_cell_size()
@@ -412,7 +422,7 @@ impl TextLayout {
         if let Some(row) = self.image_row_for_offset(offset) {
             return row;
         }
-        if self.visible_image().is_some() && offset >= self.text.len() {
+        if self.visible_attached_images().next().is_some() && offset >= self.text.len() {
             return self.row_count().saturating_sub(1);
         }
         let before_control = if let Some(control_row) = self.disclosure_row() {
@@ -552,9 +562,10 @@ impl TextLayout {
             }
         }
         Self {
-            image: None,
+            attached_images: Vec::new(),
             inline_images: Vec::new(),
             mermaid_protocol: None,
+            markdown_image_protocol: None,
             logical,
             text,
             rows,

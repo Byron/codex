@@ -5,6 +5,13 @@ use super::*;
 use crate::transcript_view::ActivityTranscriptLines;
 
 impl ChatWidget {
+    pub(crate) fn active_cell_image_data(&self) -> Vec<Arc<[u8]>> {
+        self.transcript
+            .active_cell
+            .as_ref()
+            .map_or_else(Vec::new, |cell| cell.image_data())
+    }
+
     pub(crate) fn active_activity_ids(&self) -> Vec<String> {
         self.transcript
             .active_cell
@@ -60,6 +67,7 @@ impl ChatWidget {
             activity,
             auxiliary,
             disclosure,
+            images: self.active_cell_image_data(),
         })
     }
 }

@@ -1,19 +1,21 @@
 //! Width-independent display content retained after an MCP call completes.
 //!
 //! The wire result can contain multi-megabyte image, audio, or resource bodies. Validate each
-//! block once with the MCP model, then retain only what history rendering actually displays.
+//! block once with the MCP model, then retain display text and bounded image previews.
 
 use crate::text_formatting::format_json_compact;
+use crate::transcript_image::validate_image;
 use base64::Engine;
 use codex_protocol::mcp::CallToolResult;
-use image::DynamicImage;
-use image::ImageReader;
 use rmcp::model::ContentBlock;
 use rmcp::model::ResourceContents;
 use serde::Deserialize;
 use std::borrow::Cow;
-use std::io::Cursor;
+use std::sync::Arc;
 use tracing::error;
+
+pub(super) const MAX_IMAGES: usize = 8;
+pub(super) const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum McpResultKind {
@@ -26,6 +28,7 @@ pub(super) struct McpToolResult {
     pub(super) content: Vec<McpContentBlock>,
     pub(super) is_error: bool,
     pub(super) has_image: bool,
+    pub(super) images: Vec<Arc<[u8]>>,
 }
 
 #[derive(Debug)]
@@ -44,13 +47,14 @@ enum McpContentDisplay {
 }
 
 impl McpToolResult {
-    /// Consumes a wire result, dropping bodies represented only by media or resource summaries.
+    /// Consumes a wire result, dropping audio/resource bodies and retaining bounded images.
     ///
     /// Canonical MCP deserialization preserves full text and the exact JSON fallback for malformed
-    /// or unknown blocks. Every block is projected, but image decoding stops at the first fully
-    /// valid image.
+    /// or unknown blocks. Only the first eight image blocks are decoded, sharing a 16 MiB budget.
     pub(super) fn new(result: CallToolResult, kind: McpResultKind) -> Self {
-        let mut has_image = false;
+        let mut images = Vec::new();
+        let mut image_blocks_remaining = MAX_IMAGES;
+        let mut image_bytes_remaining = MAX_IMAGE_BYTES;
         let content = result
             .content
             .into_iter()
@@ -69,10 +73,13 @@ impl McpToolResult {
                 let display = match parsed {
                     Ok(ContentBlock::Text(text)) => McpContentDisplay::Text(text.text),
                     Ok(ContentBlock::Image(image)) => {
-                        // Computer activity previews require a valid image. Stop decoding once
-                        // one has been found; the result text only retains a readable marker.
-                        if !has_image {
-                            has_image = decode_mcp_image(&image.data).is_some();
+                        if image_blocks_remaining > 0 {
+                            image_blocks_remaining -= 1;
+                            if let Some(bytes) =
+                                decode_mcp_image(&image.data, &mut image_bytes_remaining)
+                            {
+                                images.push(bytes);
+                            }
                         }
                         McpContentDisplay::Summary("Returned image".into())
                     }
@@ -105,7 +112,8 @@ impl McpToolResult {
         Self {
             content,
             is_error: result.is_error.unwrap_or(false),
-            has_image,
+            has_image: !images.is_empty(),
+            images,
         }
     }
 }
@@ -153,16 +161,19 @@ impl McpContentBlock {
     }
 }
 
-/// Fully decodes an MCP image before exposing an image preview in computer activity.
+/// Validates an MCP image before exposing an image preview in computer activity.
 ///
 /// A header-only check would accept images whose decoder rejects their pixel data. Preserve the
 /// existing behavior for invalid base64, unknown formats, corrupt images, and data URLs.
-fn decode_mcp_image(data: &str) -> Option<DynamicImage> {
+fn decode_mcp_image(data: &str, remaining: &mut usize) -> Option<Arc<[u8]>> {
     let base64_data = if let Some(data_url) = data.strip_prefix("data:") {
         data_url.split_once(',')?.1
     } else {
         data
     };
+    // Charge attempts, including corrupt images, before either base64 or pixel allocation.
+    let decoded_len = base64_data.len().div_ceil(4).checked_mul(3)?;
+    *remaining = remaining.checked_sub(decoded_len)?;
     let raw_data = base64::engine::general_purpose::STANDARD
         .decode(base64_data)
         .map_err(|e| {
@@ -170,19 +181,21 @@ fn decode_mcp_image(data: &str) -> Option<DynamicImage> {
             e
         })
         .ok()?;
-    let reader = ImageReader::new(Cursor::new(raw_data))
-        .with_guessed_format()
-        .map_err(|e| {
-            error!("Failed to guess image format: {e}");
-            e
-        })
-        .ok()?;
+    validate_image(&raw_data).then(|| raw_data.into())
+}
 
-    reader
-        .decode()
-        .map_err(|e| {
-            error!("Image decoding failed: {e}");
-            e
-        })
-        .ok()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_budget_bounds_base64_allocation_and_charges_invalid_attempts() {
+        let mut remaining = 3;
+        assert!(decode_mcp_image("AAAAAA==", &mut remaining).is_none());
+        assert_eq!(remaining, 3);
+        assert!(decode_mcp_image("????", &mut remaining).is_none());
+        assert_eq!(remaining, 0);
+        assert!(decode_mcp_image("AAAA", &mut remaining).is_none());
+        assert_eq!(remaining, 0);
+    }
 }
