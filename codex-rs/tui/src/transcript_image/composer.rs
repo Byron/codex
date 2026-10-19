@@ -124,7 +124,6 @@ impl ComposerImages {
                     image: image.clone(),
                     area: tile,
                     first_row: 0,
-                    file: None,
                 });
             } else {
                 Paragraph::new(attachment.placeholder.as_str())

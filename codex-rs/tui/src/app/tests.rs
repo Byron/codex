@@ -4936,7 +4936,12 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
                 highlighted
             );
         }
-        let image = tui.retained_images.first().map(|p| p.area);
+        let image = tui
+            .terminal
+            .transcript_images
+            .placements
+            .first()
+            .map(|p| p.area);
         assert_eq!(image.is_some(), with_image);
         keys!(prefix);
         assert!(app.key_chord_matcher.is_pending());
@@ -4958,7 +4963,7 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
         previews.push(*columns.iter().min().unwrap());
         assert_eq!(std::fs::read(&path).ok(), before);
         if let Some(area) = image {
-            assert_eq!(tui.retained_images[0].area, area);
+            assert_eq!(tui.terminal.transcript_images.placements[0].area, area);
             assert_eq!(columns[usize::from(area.y)], divider);
             previews.push(columns[usize::from(area.y)]);
             boxed_future!(app.handle_tui_event(

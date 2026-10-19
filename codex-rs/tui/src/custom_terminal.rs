@@ -132,7 +132,7 @@ impl Frame<'_> {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Default)]
 pub struct Terminal<B>
 where
     B: Backend<Error = io::Error> + Write,
@@ -158,6 +158,7 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    pub(crate) transcript_images: crate::transcript_image::terminal::TranscriptImages,
     #[cfg(test)]
     screen_size_override: Option<Size>,
 }
@@ -239,6 +240,7 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            transcript_images: Default::default(),
             #[cfg(test)]
             screen_size_override: None,
         }
@@ -352,36 +354,13 @@ where
         F: FnOnce(&mut Frame),
     {
         let screen_size = self.size()?;
-        self.draw_with_size(screen_size, &mut Vec::new(), render_callback)
-    }
-
-    /// Remove graphics on the screen that owns them before switching buffers or yielding the terminal.
-    pub(crate) fn clear_frame_images(
-        &mut self,
-        images: &mut Vec<crate::transcript_image::ImagePlacement>,
-    ) -> io::Result<()> {
-        if images.is_empty() {
-            return Ok(());
-        }
-        let text = self.previous_buffer().clone();
-        let cursor = (!self.hidden_cursor).then_some(self.last_known_cursor_pos);
-        let style = self
-            .last_cursor_style
-            .unwrap_or(SetCursorStyle::DefaultUserShape);
-        self.draw_with_size(self.last_known_screen_size, images, |frame| {
-            *frame.buffer = text;
-            if let Some(cursor) = cursor {
-                frame.set_cursor_position(cursor);
-                frame.set_cursor_style(style);
-            }
-        })
+        self.draw_with_size(screen_size, render_callback)
     }
 
     /// Draws a single frame using a screen size already obtained by the caller.
     pub(crate) fn draw_with_size<F>(
         &mut self,
         screen_size: Size,
-        retained_images: &mut Vec<crate::transcript_image::ImagePlacement>,
         render_callback: F,
     ) -> io::Result<()>
     where
@@ -400,30 +379,19 @@ where
         let cursor_position = frame.cursor_position;
         let cursor_style = frame.cursor_style;
         let mut images = std::mem::take(&mut frame.image_placements);
-        let first_id = if let Some(base) = self.tmux_kitty_image_base {
+        if self.tmux_kitty_image_base.is_some() {
             images.truncate(254); // The last two pane IDs belong to the pet and picker.
-            base
-        } else {
-            crate::transcript_image::FIRST_IMAGE_ID
-        };
-        let changed = *retained_images != images;
-        if changed {
-            if self.tmux_kitty_image_base.is_some() && !retained_images.is_empty() {
-                // tmux retains placeholder text after Ghostty deletes the associated pixels.
-                self.invalidate_viewport();
-            }
-            // Remove old graphics before text painting, including when switching to overlays.
-            for (index, placement) in retained_images.iter().enumerate() {
-                match placement.image.protocol {
-                    crate::pets::ImageProtocol::Kitty
-                    | crate::pets::ImageProtocol::KittyLocalFile => {
-                        let id = first_id + index as u32;
-                        self.backend
-                            .write_all(crate::pets::kitty_delete_image(id).as_bytes())?;
-                    }
-                    crate::pets::ImageProtocol::Sixel => self.invalidate_viewport(),
-                }
-            }
+        }
+        let changed = self.transcript_images.placements != images;
+        if changed && self.tmux_kitty_image_base.is_some() {
+            self.reset_transcript_images()?;
+        } else if changed
+            && self
+                .transcript_images
+                .remove_placements(&mut self.backend)?
+        {
+            // Sixel has no separate placement deletion; repaint the old pixels with text.
+            self.invalidate_viewport();
         }
 
         // Not every terminal or multiplexer hides intermediate cursor moves inside a
@@ -446,23 +414,11 @@ where
         }
         self.flush_updates(updates)?;
         if repaint_images {
-            *retained_images = images;
-            for (index, placement) in retained_images.iter_mut().enumerate() {
-                let id = first_id + index as u32;
-                let kitty_placement = if self.tmux_kitty_image_base.is_some() {
-                    crate::pets::KittyPlacement::Virtual(id)
-                } else {
-                    crate::pets::KittyPlacement::Cursor(id)
-                };
-                placement.file = placement
-                    .image
-                    .draw(
-                        &mut self.backend,
-                        placement.area,
-                        placement.first_row,
-                        kitty_placement,
-                    )
-                    .map_err(io::Error::other)?;
+            if let Some(base) = self.tmux_kitty_image_base {
+                self.transcript_images
+                    .draw_tmux(&mut self.backend, images, base)?;
+            } else {
+                self.transcript_images.draw(&mut self.backend, images)?;
             }
         }
 
@@ -566,8 +522,21 @@ where
         }
     }
 
+    /// Delete this screen's uploaded images before clearing it or handing it off.
+    pub(crate) fn reset_transcript_images(&mut self) -> io::Result<()> {
+        self.invalidate_viewport();
+        self.transcript_images.reset(&mut self.backend)
+    }
+
+    /// After an external screen switch, our IDs could name unrelated images on that screen.
+    pub(crate) fn forget_transcript_images(&mut self) {
+        self.invalidate_viewport();
+        self.transcript_images.forget();
+    }
+
     /// Clear the entire visible screen (not just the viewport) and force a full redraw.
     pub fn clear_visible_screen(&mut self) -> io::Result<()> {
+        self.reset_transcript_images()?;
         let home = Position { x: 0, y: 0 };
         // Some terminals (notably Terminal.app) behave more reliably if we pair ED2
         // with an explicit cursor-home before/after, matching the common `clear`
@@ -589,6 +558,8 @@ where
         if self.viewport_area.is_empty() {
             return Ok(());
         }
+
+        self.reset_transcript_images()?;
 
         // Reset scroll region + style state, home cursor, clear screen, purge scrollback.
         // The order matches the common shell `clear && printf '\\e[3J'` behavior.
@@ -912,6 +883,9 @@ mod tests {
     #[path = "cursor_tests.rs"]
     mod cursor;
 
+    #[path = "image_tests.rs"]
+    mod images;
+
     struct CaptureBackend {
         output: Vec<u8>,
         size: Size,
@@ -970,14 +944,18 @@ mod tests {
                 size.width,
                 size.height,
             ));
-            let mut retained = Vec::new();
             for (index, text) in ["", "a", "ab", "ab"].into_iter().enumerate() {
                 if index == 3 {
-                    assert_eq!(terminal.backend().output().matches("_Ga=T").count(), 1);
+                    let action = if tmux_base.is_some() {
+                        "_Ga=T"
+                    } else {
+                        "_Ga=t"
+                    };
+                    assert_eq!(terminal.backend().output().matches(action).count(), 1);
                     terminal.clear().unwrap();
                 }
                 terminal
-                    .draw_with_size(size, &mut retained, |frame| {
+                    .draw_with_size(size, |frame| {
                         Line::from(text).render(
                             Rect::new(
                                 /*x*/ 0, /*y*/ 10, /*width*/ 40, /*height*/ 1,
@@ -995,14 +973,20 @@ mod tests {
                                     image.rows,
                                 ),
                                 first_row: 0,
-                                file: None,
                             });
                     })
                     .unwrap();
             }
             let output = terminal.backend().output();
-            assert_eq!(output.matches("_Ga=T").count(), 2);
-            assert_eq!(output.matches("_Ga=d").count(), 0);
+            let action = if tmux_base.is_some() {
+                "_Ga=T"
+            } else {
+                "_Ga=t"
+            };
+            assert_eq!(
+                output.matches(action).count(),
+                if tmux_base.is_some() { 2 } else { 1 }
+            );
             if tmux_base.is_some() {
                 assert!(output.contains("i=8388864,U=1"));
                 let (_, grid) = output.split_once("\x1b[38;2;128;1;0m").unwrap();
@@ -1013,16 +997,20 @@ mod tests {
                 );
             }
             if protocol == crate::pets::ImageProtocol::KittyLocalFile {
-                assert!(output.contains("t=f") && output.contains("C=1"));
-                assert!(retained[0].file.as_ref().unwrap().path().exists());
-            } else {
-                assert!(retained[0].file.is_none());
+                assert!(output.contains("t=f") && output.contains("_Ga=p"));
             }
-            terminal
-                .draw_with_size(size, &mut retained, |_| {})
-                .unwrap();
-            assert_eq!(terminal.backend().output().matches("_Ga=d").count(), 1);
-            assert!(retained.is_empty());
+            let deletion = if tmux_base.is_some() {
+                "_Ga=d,d=I,"
+            } else {
+                "_Ga=d,d=i,"
+            };
+            let removals = output.matches(deletion).count();
+            terminal.draw_with_size(size, |_| {}).unwrap();
+            assert_eq!(
+                terminal.backend().output().matches(deletion).count(),
+                removals + 1
+            );
+            assert!(terminal.transcript_images.placements.is_empty());
         }
     }
 
@@ -1224,9 +1212,7 @@ mod tests {
         let screen_size = terminal.last_known_screen_size;
 
         for _ in 0..3 {
-            terminal
-                .draw_with_size(screen_size, &mut Vec::new(), |_| {})
-                .expect("draw");
+            terminal.draw_with_size(screen_size, |_| {}).expect("draw");
         }
 
         terminal.set_viewport_area(Rect::new(
@@ -1250,7 +1236,7 @@ mod tests {
             let area = Rect::new(/*x*/ 0, /*y*/ 0, size.width, size.height);
             terminal.set_viewport_area(area);
             terminal
-                .draw_with_size(size, &mut Vec::new(), |frame| {
+                .draw_with_size(size, |frame| {
                     Paragraph::new("alpha beta")
                         .wrap(Wrap { trim: false })
                         .render(area, frame.buffer_mut());

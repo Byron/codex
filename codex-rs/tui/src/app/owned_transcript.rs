@@ -771,7 +771,9 @@ impl App {
             self.conversation_frame.caller_images.clear();
             if self.conversation_frame.has_caller_inset() {
                 self.conversation_frame.caller_images.extend(
-                    tui.retained_images
+                    tui.terminal
+                        .transcript_images
+                        .placements
                         .iter()
                         .enumerate()
                         .filter(|(index, _)| !painted.image_range.contains(index))

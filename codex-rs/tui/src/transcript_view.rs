@@ -353,7 +353,6 @@ impl TranscriptView {
                     image: Arc::clone(image),
                     area,
                     first_row: first - image_start,
-                    file: None,
                 });
             }
         }

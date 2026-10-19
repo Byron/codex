@@ -212,6 +212,7 @@ impl PreparedResumeAction {
         owned: bool,
         capture_mouse: bool,
     ) -> Result<()> {
+        terminal.forget_transcript_images();
         match self {
             PreparedResumeAction::RealignViewport(area) => {
                 terminal.set_viewport_area(area);

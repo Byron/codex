@@ -556,12 +556,11 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
         crate::transcript_image::TranscriptImage::load(&path, area.width, protocol).unwrap();
     let neighbor = Rect::new(/*x*/ 4, /*y*/ 9, image.columns, image.rows);
     let presented = |tui: &tui::Tui| {
-        tui.retained_images
+        tui.terminal
+            .transcript_images
+            .placements
             .iter()
-            .map(|placement| {
-                assert!(placement.file.as_ref().unwrap().path().exists());
-                placement.area
-            })
+            .map(|placement| placement.area)
             .collect::<Vec<_>>()
     };
     let frames = tui.frame_requester();
@@ -578,7 +577,6 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
                 image,
                 area: neighbor,
                 first_row: 0,
-                file: None,
             });
     })?;
     app.finish_conversation(&mut tui, painted)?;
@@ -2081,7 +2079,7 @@ async fn composer_thumbnails_follow_draft_deletion_and_resize() -> Result<()> {
 
         let narrow = Size::new(/*width*/ 20, /*height*/ 24);
         app.render_chat_widget_frame(&mut tui, narrow)?;
-        let placements = &tui.retained_images;
+        let placements = &tui.terminal.transcript_images.placements;
         assert_eq!(placements.len(), 2);
         let pixels = &placements[0].image.pixels;
         // The whole panorama fits in a single pixel row inside the outlined tile.
@@ -2121,17 +2119,20 @@ async fn composer_thumbnails_follow_draft_deletion_and_resize() -> Result<()> {
 
         let wide = Size::new(/*width*/ 60, /*height*/ 24);
         app.render_chat_widget_frame(&mut tui, wide)?;
-        assert_eq!(tui.retained_images.len(), 3);
-        let portrait_image = tui.retained_images[1].image.clone();
+        assert_eq!(tui.terminal.transcript_images.placements.len(), 3);
+        let portrait_image = tui.terminal.transcript_images.placements[1].image.clone();
         app.chat_widget.handle_key_event(KeyCode::Home.into());
         app.chat_widget.handle_key_event(KeyCode::Delete.into());
         app.render_chat_widget_frame(&mut tui, wide)?;
-        assert_eq!(tui.retained_images.len(), 2);
-        assert_eq!(tui.retained_images[0].image.pixels, portrait_image.pixels);
+        assert_eq!(tui.terminal.transcript_images.placements.len(), 2);
+        assert_eq!(
+            tui.terminal.transcript_images.placements[0].image.pixels,
+            portrait_image.pixels
+        );
         // A draft submits the current file, even if it was replaced since attachment.
         image::RgbaImage::from_pixel(/*width*/ 2, /*height*/ 2, red).save(&portrait)?;
         app.render_chat_widget_frame(&mut tui, wide)?;
-        let updated = &tui.retained_images[0].image.pixels;
+        let updated = &tui.terminal.transcript_images.placements[0].image.pixels;
         assert!(updated.pixels().any(|pixel| *pixel == red));
         // Both insufficient height and an unsupported terminal leave the references editable.
         for (height, support) in [
@@ -2143,7 +2144,7 @@ async fn composer_thumbnails_follow_draft_deletion_and_resize() -> Result<()> {
         ] {
             app.chat_widget.set_pet_image_support_for_tests(support);
             app.render_chat_widget_frame(&mut tui, Size::new(wide.width, height))?;
-            assert!(tui.retained_images.is_empty());
+            assert!(tui.terminal.transcript_images.placements.is_empty());
             assert!(
                 buffer_text(last_rendered_buffer(&tui.terminal)).contains("[Image #1][Image #2]")
             );

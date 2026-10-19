@@ -401,7 +401,7 @@ impl App {
                     width,
                     // Both panes share the divider. Reflowing either can move terminal-owned
                     // image pixels across it, so defer both layouts until release.
-                    guide_only: !tui.retained_images.is_empty(),
+                    guide_only: !tui.terminal.transcript_images.placements.is_empty(),
                 });
                 self.cancel_pending_key_chord();
             }
