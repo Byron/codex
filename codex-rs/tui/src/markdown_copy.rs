@@ -102,6 +102,8 @@ pub(crate) struct CopyLine {
     pub(crate) code: bool,
     /// Source shared by rows when rendering replaces code with a diagram or table.
     pub(crate) code_source: Option<Arc<str>>,
+    /// A completed, enabled Mermaid fence eligible for graphical rendering.
+    pub(crate) mermaid: bool,
     /// Outer quote source, retained even when it contains only code.
     pub(crate) quote_source: Option<Arc<str>>,
     pub(crate) table: Option<table::TableLine>,

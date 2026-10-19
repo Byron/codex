@@ -6,6 +6,18 @@ For advanced configuration instructions, see [this documentation](https://develo
 
 For a full configuration reference, see [this documentation](https://developers.openai.com/codex/config-reference).
 
+## Mermaid images
+
+Mermaid diagrams automatically render as images in the fullscreen transcript
+when the terminal supports the Kitty graphics protocol. No configuration is
+required. Unsupported terminals, inline mode, and diagrams that cannot
+be rendered as images retain the text fallback. Setting `tui.rendering.mermaid`
+to `false` disables both text and image rendering and preserves the diagram source.
+
+Flowchart, sequence, class, state, entity-relationship, and pie diagrams are
+supported. Oversized diagrams retain the text fallback. Code-block copying keeps
+the original Mermaid source, and Find temporarily reveals the matching text.
+
 ## Lifecycle hooks
 
 Admins can set top-level `allow_managed_hooks_only = true` in

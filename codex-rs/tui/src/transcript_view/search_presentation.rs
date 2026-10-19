@@ -105,6 +105,11 @@ impl TranscriptView {
         } else {
             self.entry_layout(cells, anchor.index, /*full_content*/ true)?
         };
+        let layout = if layout.has_mermaid_images() {
+            Arc::new(layout.without_mermaid_images())
+        } else {
+            layout
+        };
         self.search.scanning_layout = Some((anchor.key, Arc::clone(&layout)));
         Some(layout)
     }

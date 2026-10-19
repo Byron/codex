@@ -90,6 +90,7 @@ struct VisibleRow {
 /// Shared scrolling and interaction state for compact and detailed transcript presentations.
 pub(crate) struct TranscriptView {
     pub(crate) image_protocol: Option<crate::pets::ImageProtocol>,
+    mermaid_image_protocol: Option<crate::pets::ImageProtocol>,
     pub(crate) mouse_scroll_speed: f64,
     pending_mouse_scroll: f64,
     pub(crate) copy_on_select: bool,
@@ -104,6 +105,7 @@ pub(crate) struct TranscriptView {
     live: Option<Arc<TextLayout>>,
     live_separated: Option<Arc<TextLayout>>,
     live_key: Option<(u16, ActiveCellTranscriptKey)>,
+    live_image_state: Option<(Option<crate::pets::ImageProtocol>, layout::RenderState)>,
     live_continuation: bool,
     area: Rect,
     prompt_header_target: Option<(Rect, EntryKey)>,
@@ -130,6 +132,7 @@ impl Default for TranscriptView {
     fn default() -> Self {
         Self {
             image_protocol: None,
+            mermaid_image_protocol: None,
             mouse_scroll_speed: 1.0,
             pending_mouse_scroll: 0.0,
             copy_on_select: false,
@@ -144,6 +147,7 @@ impl Default for TranscriptView {
             live: None,
             live_separated: None,
             live_key: None,
+            live_image_state: None,
             live_continuation: false,
             area: Rect::default(),
             prompt_header_target: None,
@@ -314,26 +318,25 @@ impl TranscriptView {
             let entry_y = y;
             y += rows.len() as u16;
             let visible = &rows[0];
-            let Some(image) = visible.layout.visible_image() else {
-                continue;
-            };
-            let image_start = visible.layout.text_row_count();
-            let skip = image_start.saturating_sub(visible.row);
-            if skip >= rows.len() {
-                continue;
+            for (image_start, column, image) in visible.layout.images() {
+                let first = image_start.max(visible.row);
+                let end = (image_start + usize::from(image.rows)).min(visible.row + rows.len());
+                if first >= end {
+                    continue;
+                }
+                let area = Rect::new(
+                    self.area.x + column,
+                    entry_y + (first - visible.row) as u16,
+                    image.columns,
+                    (end - first) as u16,
+                );
+                placements.push(crate::transcript_image::ImagePlacement {
+                    image: Arc::clone(image),
+                    area,
+                    first_row: first - image_start,
+                    file: None,
+                });
             }
-            let area = Rect::new(
-                self.area.x + self.area.width.saturating_sub(image.columns) / 2,
-                entry_y + skip as u16,
-                image.columns,
-                (rows.len() - skip) as u16,
-            );
-            placements.push(crate::transcript_image::ImagePlacement {
-                image: Arc::clone(image),
-                area,
-                first_row: visible.row.saturating_sub(image_start),
-                file: None,
-            });
         }
         placements
     }
@@ -371,6 +374,11 @@ impl TranscriptView {
         key: Option<ActiveCellTranscriptKey>,
         layout: impl FnOnce(u16) -> Option<TextLayout>,
     ) -> bool {
+        let image_state = (self.mermaid_image_protocol, layout::RenderState::current());
+        if self.live_image_state.as_ref() != Some(&image_state) {
+            self.live_key = None;
+            self.live_image_state = Some(image_state);
+        }
         let next = key.map(|key| (width, key));
         if key.is_some_and(|key| key.cacheable) && self.live_key == next {
             return false;
@@ -380,7 +388,14 @@ impl TranscriptView {
         self.live_key = next;
         self.live_separated = None;
         self.live_continuation = key.is_some_and(|key| key.is_stream_continuation);
-        let live = layout(width).map(Arc::new);
+        let live = layout(width).map(|layout| {
+            Arc::new(match self.mermaid_image_protocol {
+                Some(protocol) if self.mode == HistoryRenderMode::Rich => {
+                    layout.with_mermaid_images(protocol)
+                }
+                _ => layout,
+            })
+        });
         if self.live.as_ref().map(|layout| layout.text())
             != live.as_ref().map(|layout| layout.text())
         {
@@ -392,6 +407,17 @@ impl TranscriptView {
         let changed = self.live.is_some() || live.is_some();
         self.live = live;
         changed
+    }
+
+    pub(crate) fn set_mermaid_image_protocol(
+        &mut self,
+        protocol: Option<crate::pets::ImageProtocol>,
+    ) {
+        if self.mermaid_image_protocol != protocol {
+            self.mermaid_image_protocol = protocol;
+            self.cache.clear();
+            self.live_key = None;
+        }
     }
 
     pub(crate) fn set_presentation(&mut self, detailed: bool, mode: HistoryRenderMode) {
@@ -705,3 +731,7 @@ mod markdown_copy_tests;
 #[cfg(test)]
 #[path = "transcript_view/copy_on_select_tests.rs"]
 mod copy_on_select_tests;
+
+#[cfg(test)]
+#[path = "transcript_view/mermaid_tests.rs"]
+mod mermaid_tests;

@@ -186,6 +186,7 @@ mod markdown_render;
 mod markdown_stream;
 mod markdown_text_merge;
 mod mention_codec;
+mod mermaid_image;
 mod model_catalog;
 mod model_migration;
 mod motion;

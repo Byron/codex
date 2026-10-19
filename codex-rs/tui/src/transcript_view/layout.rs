@@ -66,12 +66,24 @@ pub(super) struct LayoutCache {
 }
 
 #[derive(PartialEq, Eq)]
-struct RenderState {
+pub(super) struct RenderState {
     theme: u64,
     foreground: Option<(u8, u8, u8)>,
     background: Option<(u8, u8, u8)>,
     color_level: crate::terminal_palette::StdoutColorLevel,
     cell_size: Option<(u32, u32)>,
+}
+
+impl RenderState {
+    pub(super) fn current() -> Self {
+        Self {
+            theme: crate::render::highlight::syntax_theme_revision(),
+            foreground: crate::terminal_palette::default_fg(),
+            background: crate::terminal_palette::default_bg(),
+            color_level: crate::terminal_palette::stdout_color_level(),
+            cell_size: crate::transcript_image::terminal_cell_size(),
+        }
+    }
 }
 
 struct CachedLayout {
@@ -91,6 +103,7 @@ pub(super) struct CellPresentation {
     disclosure: bool,
     detailed: bool,
     image_protocol: Option<crate::pets::ImageProtocol>,
+    mermaid_protocol: Option<crate::pets::ImageProtocol>,
 }
 
 impl TranscriptView {
@@ -186,6 +199,9 @@ impl TranscriptView {
             image_protocol: self
                 .image_protocol
                 .filter(|_| mode == HistoryRenderMode::Rich && reveal_image),
+            mermaid_protocol: self
+                .mermaid_image_protocol
+                .filter(|_| mode == HistoryRenderMode::Rich),
         };
         let shortcut = self
             .disclosure
@@ -225,6 +241,9 @@ impl TranscriptView {
                     crate::transcript_image::TranscriptImage::load(path.as_path(), width, protocol)
                         .map(Arc::new);
             }
+            if let Some(protocol) = presentation.mermaid_protocol {
+                layout = layout.with_mermaid_images(protocol);
+            }
             layout
         }))
     }
@@ -233,13 +252,7 @@ impl TranscriptView {
 impl LayoutCache {
     pub(super) fn begin_frame(&mut self) {
         self.frame = self.frame.wrapping_add(/*rhs*/ 1);
-        let state = RenderState {
-            theme: crate::render::highlight::syntax_theme_revision(),
-            foreground: crate::terminal_palette::default_fg(),
-            background: crate::terminal_palette::default_bg(),
-            color_level: crate::terminal_palette::stdout_color_level(),
-            cell_size: crate::transcript_image::terminal_cell_size(),
-        };
+        let state = RenderState::current();
         if self.render_state.as_ref() != Some(&state) {
             self.entries.clear();
             self.render_state = Some(state);
@@ -299,14 +312,8 @@ impl LayoutCache {
     }
 
     fn evict(&mut self) {
-        let retained_bytes = |entry: &CachedLayout| {
-            entry.layout.text().len()
-                + entry
-                    .layout
-                    .image
-                    .as_ref()
-                    .map_or(0, |image| image.pixels.len())
-        };
+        let retained_bytes =
+            |entry: &CachedLayout| entry.layout.text().len() + entry.layout.image_bytes();
         let mut bytes = self.entries.iter().map(retained_bytes).sum::<usize>();
         // Retain a single oversized entry rather than repeatedly laying it out while visible.
         while self.entries.len() > 1

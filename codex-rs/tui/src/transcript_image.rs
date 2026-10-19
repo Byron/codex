@@ -1,6 +1,6 @@
 //! Bounded image previews for the owned fullscreen transcript.
 //!
-//! Only decoded local image pixels reach the terminal encoders. Previews are never source text;
+//! Only decoded or generated image pixels reach the terminal encoders. Previews are never source text;
 //! their reserved rows belong to layout. The terminal retains visible placements and any local
 //! transport files until those placements change.
 

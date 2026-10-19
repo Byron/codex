@@ -1152,28 +1152,25 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         if let Some(lang) = self.code_block_lang.take() {
             let code = std::mem::take(&mut self.code_block_buffer);
             if !code.is_empty() {
-                let diagram = if preferences::current().mermaid
+                let is_mermaid = preferences::current().mermaid
                     && lang == "mermaid"
-                    && mermaid::has_closing_fence(self.input, range, self.code_block_content_end)
-                {
+                    && mermaid::has_closing_fence(self.input, range, self.code_block_content_end);
+                let highlighted = if is_mermaid {
                     let indent =
                         Self::spans_display_width(&self.prefix_spans(self.pending_marker_line));
-                    Some(mermaid::render(
+                    mermaid::render(
                         &code,
                         self.wrap_width.map(|width| width.saturating_sub(indent)),
                         &current_syntax_theme(),
-                    ))
+                    )
                 } else {
-                    None
-                };
-                let highlighted = match diagram {
-                    Some(diagram) => diagram,
-                    None => highlight_code_to_lines(&code, &lang),
+                    highlight_code_to_lines(&code, &lang)
                 };
                 let source: std::sync::Arc<str> = code.into();
                 for hl_line in highlighted {
                     self.push_line(Line::default());
                     self.copy_line.code_source = Some(std::sync::Arc::clone(&source));
+                    self.copy_line.mermaid = is_mermaid;
                     for span in hl_line.spans {
                         self.push_span(span);
                     }

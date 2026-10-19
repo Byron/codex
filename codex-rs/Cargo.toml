@@ -416,6 +416,7 @@ log = "0.4"
 lru = "0.18.2"
 maplit = "1.0.2"
 memchr = "2.7.6"
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 mime_guess = "2.0.5"
 multimap = "0.10.0"
 notify = "8.2.0"
@@ -451,6 +452,7 @@ regex = "1.12.3"
 regex-automata = { version = "0.4.13", default-features = false, features = ["std", "syntax", "unicode", "nfa-pikevm"] }
 regex-lite = "0.1.8"
 regex-syntax = "0.8.8"
+resvg = { version = "0.47.0", default-features = false, features = ["text", "system-fonts"] }
 reqwest = { version = "0.12", features = ["cookies"] }
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "98a54789b80110ad210495c4ad845c89e1980471", version = "=3.5.1", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
