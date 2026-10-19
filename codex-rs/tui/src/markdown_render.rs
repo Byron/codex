@@ -1202,23 +1202,19 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                 // event. Ordinary fenced code text starts after the opening fence.
                 let literal_markdown_fence = self.code_block_content.start == range.start
                     && crate::table_detect::is_markdown_fence_info(&lang, /*marker_len*/ 0);
-                let diagram = if preferences::current().mermaid
+                let is_mermaid = preferences::current().mermaid
                     && lang == "mermaid"
-                    && mermaid::has_closing_fence(self.input, range, self.code_block_content.end)
-                {
+                    && mermaid::has_closing_fence(self.input, range, self.code_block_content.end);
+                let highlighted = if is_mermaid {
                     let indent =
                         Self::spans_display_width(&self.prefix_spans(self.pending_marker_line));
-                    Some(mermaid::render(
+                    mermaid::render(
                         &code,
                         self.wrap_width.map(|width| width.saturating_sub(indent)),
                         &current_syntax_theme(),
-                    ))
+                    )
                 } else {
-                    None
-                };
-                let highlighted = match diagram {
-                    Some(diagram) => diagram,
-                    None => highlight_code_to_lines(&code, &lang),
+                    highlight_code_to_lines(&code, &lang)
                 };
                 let source = if literal_markdown_fence
                     && let Some(crate::markdown::CopyTarget::Code { content, .. }) =
@@ -1233,6 +1229,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
                 for hl_line in highlighted {
                     self.push_line(Line::default());
                     self.copy_line.code_source = Some(std::sync::Arc::clone(&source));
+                    self.copy_line.mermaid = is_mermaid;
                     for span in hl_line.spans {
                         self.push_span(span);
                     }

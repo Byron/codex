@@ -108,6 +108,78 @@ fn mermaid_unclosed_blocks_keep_source_without_notice() {
 }
 
 #[test]
+fn mermaid_rows_share_source_per_completed_fence() {
+    use crate::markdown_render::ListSpacing;
+    use crate::markdown_render::render_markdown_lines_with_width_and_cwd;
+    use crate::markdown_render::render_streaming_markdown_lines_with_width_and_cwd;
+    use std::sync::Arc;
+
+    for code in [
+        "flowchart LR\nA[Request] --> B[Reply]\n",
+        "pie\n\"Cats\": 2\n",
+    ] {
+        let markdown =
+            format!("Before.\n\n```mermaid\n{code}```\n```mermaid\n{code}```\n\nAfter.\n");
+        for width in [8, 80] {
+            for lines in [
+                render_markdown_lines_with_width_and_cwd(&markdown, Some(width), None),
+                render_streaming_markdown_lines_with_width_and_cwd(
+                    &markdown,
+                    Some(width),
+                    None,
+                    &|_| false,
+                    ListSpacing::AfterMultiline,
+                )
+                .lines,
+            ] {
+                let mut blocks = Vec::new();
+                for copy in lines
+                    .iter()
+                    .filter_map(|line| line.source.as_ref()?.copy.as_ref())
+                {
+                    assert_eq!(copy.mermaid, copy.code_source.is_some());
+                    if let Some(source) = &copy.code_source {
+                        assert_eq!(source.as_ref(), code);
+                        blocks.push(Arc::clone(source));
+                    }
+                }
+                blocks.dedup_by(|left, right| Arc::ptr_eq(left, right));
+                assert_eq!(blocks.len(), 2);
+                assert!(!Arc::ptr_eq(&blocks[0], &blocks[1]));
+            }
+        }
+    }
+}
+
+#[test]
+fn mermaid_metadata_excludes_unfinished_or_disabled_fences() {
+    use crate::markdown_render::preferences;
+    use crate::markdown_render::render_markdown_lines_with_width_and_cwd;
+    use codex_config::types::TuiRendering;
+
+    for enabled in [true, false] {
+        preferences::init(TuiRendering {
+            mermaid: enabled,
+            ..Default::default()
+        });
+        for (markdown, complete) in [
+            ("```mermaid\nflowchart LR\nA --> B\n```\n", true),
+            ("```mermaid\nflowchart LR\nA --> B\n", false),
+            ("````mermaid\nflowchart LR\nA --> B\n```\n", false),
+            ("```rust\nlet value = 1;\n```\n", false),
+        ] {
+            let lines = render_markdown_lines_with_width_and_cwd(markdown, Some(80), None);
+            assert!(!lines.is_empty());
+            for line in lines {
+                let copy = line.source.as_ref().unwrap().copy.as_ref().unwrap();
+                assert_eq!(copy.mermaid, enabled && complete, "{markdown}");
+            }
+        }
+    }
+    preferences::init(TuiRendering::default());
+}
+
+#[test]
 fn mermaid_fallback_notices_preserve_source() {
     let mut cases = Vec::new();
     for (name, source, width) in [

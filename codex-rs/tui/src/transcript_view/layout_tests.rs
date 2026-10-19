@@ -54,6 +54,7 @@ fn layouts_refresh_for_width_animation_and_mutable_frames() {
                     disclosure: false,
                     detailed: false,
                     image_protocol: None,
+                    mermaid_protocol: None,
                 },
                 || TextLayout::new(history.transcript_hyperlink_lines(width), width),
             )
@@ -113,6 +114,7 @@ fn recent_entries_are_reused_and_old_entries_are_evicted() {
                 disclosure: false,
                 detailed: false,
                 image_protocol: None,
+                mermaid_protocol: None,
             },
             || {
                 TextLayout::new(
@@ -136,6 +138,7 @@ fn recent_entries_are_reused_and_old_entries_are_evicted() {
                 disclosure: false,
                 detailed: false,
                 image_protocol: None,
+                mermaid_protocol: None,
             },
             || {
                 TextLayout::new(

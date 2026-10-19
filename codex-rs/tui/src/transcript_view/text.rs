@@ -15,6 +15,9 @@ mod logical;
 #[path = "text_tabs.rs"]
 mod tabs;
 
+#[path = "text_images.rs"]
+mod images;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Alignment;
 use ratatui::layout::Rect;
@@ -43,6 +46,8 @@ use ratatui::text::Line;
 /// One cell's logical text and its width-dependent display rows.
 pub(crate) struct TextLayout {
     pub(super) image: Option<std::sync::Arc<crate::transcript_image::TranscriptImage>>,
+    inline_images: Vec<images::InlineImage>,
+    mermaid_protocol: Option<crate::pets::ImageProtocol>,
     logical: Vec<LogicalLine>,
     text: String,
     rows: Vec<TextRow>,
@@ -164,7 +169,14 @@ impl TextLayout {
 
     /// Reflow the same displayed content revision, retaining styles, links and disclosure label.
     pub(super) fn rewrap(&self, width: u16) -> Self {
+        self.reflow(width, self.mermaid_protocol)
+    }
+
+    fn reflow(&self, width: u16, protocol: Option<crate::pets::ImageProtocol>) -> Self {
         let mut layout = Self::from_logical(self.logical.clone(), width);
+        if let Some(protocol) = protocol {
+            layout = layout.with_mermaid_images(protocol);
+        }
         if let Some(control) = &self.disclosure_control {
             layout = layout.with_control(control.label.clone(), control.anchor);
         }
@@ -208,6 +220,16 @@ impl TextLayout {
             self.rows.remove(control.row);
             if control.anchor == DisclosureAnchor::Turn {
                 self.rows.remove(control.row - 1);
+            }
+            let removed_rows = if control.anchor == DisclosureAnchor::Turn {
+                2
+            } else {
+                1
+            };
+            for image in &mut self.inline_images {
+                if image.start_row > control.row {
+                    image.start_row -= removed_rows;
+                }
             }
         }
         let source_offset = match anchor {
@@ -265,6 +287,9 @@ impl TextLayout {
             .is_some_and(|row| line_width(&row.line.line) == 0)
         {
             self.rows.remove(/*index*/ 0);
+            for image in &mut self.inline_images {
+                image.start_row = image.start_row.saturating_sub(1);
+            }
             self.leading_blank_hidden = true;
             if let Some(control) = &mut self.disclosure_control {
                 control.row = control.row.saturating_sub(/*rhs*/ 1);
@@ -308,6 +333,11 @@ impl TextLayout {
                 tabs: tabs::TabStops::default(),
             },
         );
+        for image in &mut self.inline_images {
+            if image.start_row >= index {
+                image.start_row += 1;
+            }
+        }
     }
 
     /// Source text between adjacent retained fragments; distinct logical lines have a hard break.
@@ -475,6 +505,9 @@ impl TextLayout {
 
     /// Find the display row containing a source position, including omitted wrapping whitespace.
     pub(super) fn row_for_offset(&self, offset: usize) -> usize {
+        if let Some(row) = self.image_row_for_offset(offset) {
+            return row;
+        }
         if self.visible_image().is_some() && offset >= self.text.len() {
             return self.row_count().saturating_sub(1);
         }
@@ -616,6 +649,8 @@ impl TextLayout {
         }
         Self {
             image: None,
+            inline_images: Vec::new(),
+            mermaid_protocol: None,
             logical,
             text,
             rows,
