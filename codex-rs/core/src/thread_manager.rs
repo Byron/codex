@@ -1186,6 +1186,7 @@ impl ThreadManager {
             &options.config,
             &source,
             options.allow_provider_model_fallback,
+            matches!(&options.initial_history, InitialHistory::Resumed(_)),
         )
         .await?;
         Ok(info.model)

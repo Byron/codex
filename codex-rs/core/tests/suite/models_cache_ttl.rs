@@ -32,6 +32,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::user_input::UserInput;
 use core_test_support::responses;
@@ -62,6 +63,63 @@ const REMOTE_MODEL: &str = "codex-test-ttl";
 const VERSIONED_MODEL: &str = "codex-test-versioned";
 const MISSING_VERSION_MODEL: &str = "codex-test-missing-version";
 const DIFFERENT_VERSION_MODEL: &str = "codex-test-different-version";
+
+#[test_case::test_case("gpt-6-astra", false, 0; "bundled model with stale cache")]
+#[test_case::test_case(REMOTE_MODEL, true, 0; "remote model with fresh cache")]
+#[test_case::test_case(REMOTE_MODEL, false, 1; "remote model with stale cache")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_uses_local_model_metadata_when_available(
+    model: &str,
+    fresh_cache: bool,
+    expected_resume_fetches: usize,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::start().await;
+    let mut remote_model = test_remote_model(model, /*priority*/ 1);
+    remote_model.context_window = Some(123_000);
+    let catalog = ModelsResponse {
+        models: vec![remote_model],
+    };
+    let initial_models =
+        responses::mount_models_once_with_etag(&server, catalog.clone(), ETAG).await;
+    let mut builder = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_model(model)
+        .with_history_mode(ThreadHistoryMode::Legacy);
+    let initial = builder.build_with_auto_env(&server).await?;
+    initial.codex.ensure_rollout_materialized().await;
+    assert_eq!(initial_models.requests().len(), 1);
+    if !fresh_cache {
+        rewrite_cache_timestamp(
+            &initial.config.codex_home.join(CACHE_FILE),
+            Utc::now() - chrono::Duration::hours(1),
+        )
+        .await?;
+    }
+
+    let resume_models = responses::mount_models_once_with_etag(&server, catalog, ETAG).await;
+    builder = builder.with_model(model);
+    let resumed = builder.restart_with_auto_env(&server, &initial).await?;
+
+    assert_eq!(resumed.session_configured.model, model);
+    assert_eq!(resume_models.requests().len(), expected_resume_fetches);
+    let model_info = resumed.codex.selected_model_info().await;
+    assert_eq!(model_info.slug, model);
+    let expected_context_window = if model == REMOTE_MODEL {
+        Some(123_000)
+    } else {
+        codex_models_manager::bundled_models_response()?
+            .models
+            .into_iter()
+            .find(|candidate| candidate.slug == model)
+            .expect("bundled model")
+            .context_window
+    };
+    assert_eq!(model_info.context_window, expected_context_window);
+    resumed.codex.shutdown_and_wait().await?;
+    Ok(())
+}
 
 #[test_case::test_case(true; "expired_cache")]
 #[test_case::test_case(false; "disabled_cache")]

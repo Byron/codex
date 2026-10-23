@@ -145,6 +145,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::openai_models::CatalogModel;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelOrigin;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -622,11 +623,27 @@ impl Session {
         config: &Config,
         session_source: &SessionSource,
         allow_provider_model_fallback: bool,
+        resuming: bool,
     ) -> CodexResult<(String, CatalogModel)> {
         // Child catalogs are initialized by their selector. Reading only memory here
         // preserves the loaded snapshot shared with the parent.
         let refresh_strategy = if session_source.is_non_root_agent() {
             RefreshStrategy::InMemory
+        } else if resuming && let Some(model) = config.model.as_deref() {
+            // Known models can resume without waiting for discovery.
+            let _ = models_manager
+                .list_models(RefreshStrategy::Offline, config.http_client_factory())
+                .await;
+            if models_manager
+                .get_model_info(model, &config.to_models_manager_config())
+                .await
+                .origin
+                == ModelOrigin::Synthetic
+            {
+                RefreshStrategy::OnlineIfUncached
+            } else {
+                RefreshStrategy::Offline
+            }
         } else {
             RefreshStrategy::OnlineIfUncached
         };
@@ -844,6 +861,7 @@ impl Session {
             &config,
             &session_source,
             allow_provider_model_fallback,
+            matches!(&conversation_history, InitialHistory::Resumed(_)),
         )
         .await?;
         let requested_approvals_reviewer = config
