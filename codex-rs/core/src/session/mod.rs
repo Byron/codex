@@ -726,6 +726,25 @@ impl Session {
         let mut config = Arc::new(config);
         let refresh_strategy = if session_source.is_non_root_agent() {
             codex_models_manager::manager::RefreshStrategy::Offline
+        } else if matches!(&conversation_history, InitialHistory::Resumed(_))
+            && let Some(model) = config.model.as_deref()
+        {
+            // Known models can restore a conversation without waiting for discovery.
+            let _ = models_manager
+                .list_models(
+                    codex_models_manager::manager::RefreshStrategy::Offline,
+                    config.http_client_factory(),
+                )
+                .await;
+            if models_manager
+                .get_model_info(model, &config.to_models_manager_config())
+                .await
+                .used_fallback_model_metadata
+            {
+                codex_models_manager::manager::RefreshStrategy::OnlineIfUncached
+            } else {
+                codex_models_manager::manager::RefreshStrategy::Offline
+            }
         } else {
             codex_models_manager::manager::RefreshStrategy::OnlineIfUncached
         };
