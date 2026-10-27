@@ -28,7 +28,7 @@ fn uploads(output: &str) -> usize {
 
 fn draw_image(terminal: &mut Terminal<CaptureBackend>, image: &Arc<TranscriptImage>, footer: &str) {
     terminal
-        .draw_with_size(terminal.last_known_screen_size, |frame| {
+        .draw_synchronized_with_size(terminal.last_known_screen_size, |frame| {
             Line::from(footer).render(Rect::new(0, 15, 40, 1), frame.buffer_mut());
             frame.image_placements.push(ImagePlacement {
                 image: Arc::clone(image),
@@ -37,6 +37,28 @@ fn draw_image(terminal: &mut Terminal<CaptureBackend>, image: &Arc<TranscriptIma
             });
         })
         .unwrap();
+}
+
+#[test]
+fn unchanged_graphics_emit_no_synchronized_update_or_image_commands() {
+    for protocol in [
+        ImageProtocol::Kitty,
+        ImageProtocol::KittyLocalFile,
+        ImageProtocol::Sixel,
+    ] {
+        let image = image(protocol);
+        let mut terminal = terminal();
+        draw_image(&mut terminal, &image, "Working");
+        terminal.backend_mut().output.clear();
+        draw_image(&mut terminal, &image, "Working");
+        assert_eq!(terminal.backend().output(), "");
+        terminal
+            .draw_synchronized_with_size(terminal.last_known_screen_size, |_| {})
+            .unwrap();
+        let output = terminal.backend().output();
+        assert!(output.starts_with("\x1b[?2026h"));
+        assert!(output.ends_with("\x1b[?2026l"));
+    }
 }
 
 #[test]
