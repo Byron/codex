@@ -3,7 +3,7 @@
 //! Keeping this logic in a focused submodule makes the additive title/status
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 //! Terminal-title activity stays animated even when TUI motion is reduced so
-//! background tabs still signal progress and required input.
+//! background tabs still signal progress and required input, at one-second intervals.
 //! Individual effect preferences still apply.
 
 use super::*;
@@ -13,6 +13,8 @@ use crate::chatwidget::limit_label_for_window;
 use crate::chatwidget::rate_limits::get_limits_duration;
 use crate::legacy_core::config::Config;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
+use crate::motion::ACTIVITY_BLINK_INTERVAL;
+use crate::motion::activity_frame_delay;
 use crate::status::format_credit_micros;
 use crate::status::format_estimated_usd_micros;
 use crate::status::format_tokens_compact;
@@ -258,7 +260,14 @@ impl ChatWidget {
         let now = Instant::now();
         self.terminal_title_next_refresh = self
             .terminal_title_animation_interval_with_selections(selections)
-            .map(|interval| now + interval);
+            .map(|interval| {
+                let delay = if self.local_settings.tui.animations {
+                    interval
+                } else {
+                    activity_frame_delay(self.terminal_title_animation_elapsed_at(now))
+                };
+                now + delay
+            });
         if selections.terminal_title_items.is_empty() {
             if let Err(err) = self.clear_managed_terminal_title() {
                 tracing::debug!(error = %err, "failed to clear terminal title");
@@ -410,7 +419,7 @@ impl ChatWidget {
             return TERMINAL_TITLE_ACTION_REQUIRED_PREFIX;
         }
 
-        let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
+        let elapsed = self.terminal_title_animation_elapsed_at(now);
         let phase = (elapsed.as_millis() / TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL.as_millis()) % 2;
         if phase == 0 {
             TERMINAL_TITLE_ACTION_REQUIRED_PREFIX
@@ -440,7 +449,11 @@ impl ChatWidget {
         }
 
         self.should_animate_terminal_title_spinner_with_selections(selections)
-            .then_some(TERMINAL_TITLE_SPINNER_INTERVAL)
+            .then_some(if self.local_settings.tui.animations {
+                TERMINAL_TITLE_SPINNER_INTERVAL
+            } else {
+                ACTIVITY_BLINK_INTERVAL
+            })
     }
 
     pub(super) fn request_status_line_branch_refresh(&mut self) {
@@ -1060,10 +1073,24 @@ impl ChatWidget {
     }
 
     pub(super) fn terminal_title_spinner_frame_at(&self, now: Instant) -> &'static str {
-        let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
-        let frame_index =
-            (elapsed.as_millis() / TERMINAL_TITLE_SPINNER_INTERVAL.as_millis()) as usize;
+        let elapsed = self.terminal_title_animation_elapsed_at(now);
+        let interval = if self.local_settings.tui.animations {
+            TERMINAL_TITLE_SPINNER_INTERVAL
+        } else {
+            ACTIVITY_BLINK_INTERVAL
+        };
+        let frame_index = (elapsed.as_millis() / interval.as_millis()) as usize;
         TERMINAL_TITLE_SPINNER_FRAMES[frame_index % TERMINAL_TITLE_SPINNER_FRAMES.len()]
+    }
+
+    fn terminal_title_animation_elapsed_at(&self, now: Instant) -> Duration {
+        if !self.local_settings.tui.animations
+            && !self.terminal_title_requires_action()
+            && let Some(elapsed) = self.bottom_pane.status_display_elapsed_at(now)
+        {
+            return elapsed;
+        }
+        now.saturating_duration_since(self.terminal_title_animation_origin)
     }
 
     fn terminal_title_uses_activity(&self) -> bool {

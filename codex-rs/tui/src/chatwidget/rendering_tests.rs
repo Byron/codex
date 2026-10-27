@@ -1,5 +1,6 @@
 use super::*;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
+use crate::motion::ACTIVITY_BLINK_INTERVAL;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -401,7 +402,11 @@ fn streaming_activity_pulse_preserves_visible_text_when_clipped() {
                 child: &cell,
                 top: 1,
                 right: 0,
-                activity: Some((blinking_activity_indicator(elapsed), &frame_requester)),
+                activity: Some((
+                    blinking_activity_indicator(elapsed),
+                    &frame_requester,
+                    activity_frame_delay(elapsed),
+                )),
                 persistent_layout: None,
             };
             let area = Rect::new(/*x*/ 2, /*y*/ 3, width, height);
@@ -438,12 +443,16 @@ async fn streaming_commentary_borrows_the_slow_activity_pulse() {
     widget.bottom_pane.reset_status_timer(Duration::ZERO);
 
     let before = Instant::now();
+    let expected = before
+        + activity_frame_delay(
+            widget
+                .bottom_pane
+                .status_display_elapsed_at(before)
+                .unwrap(),
+        );
     let frame = render_frame(&widget, /*width*/ 60);
     let deadline = draw_rx.try_recv().expect("live message activity refresh");
-    assert!(
-        (before + ACTIVITY_BLINK_INTERVAL..=Instant::now() + ACTIVITY_BLINK_INTERVAL)
-            .contains(&deadline)
-    );
+    assert!((expected..expected + Duration::from_millis(50)).contains(&deadline));
     assert!(contains_text(&frame, "• The release build is finishing."));
     assert!(!widget.bottom_pane.status_indicator_visible());
 

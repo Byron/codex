@@ -728,6 +728,11 @@ impl BottomPane {
             .then(|| self.status_timer.elapsed_at(Instant::now()))
     }
 
+    pub(crate) fn status_display_elapsed_at(&self, now: Instant) -> Option<Duration> {
+        self.is_task_running
+            .then(|| self.status_timer.display_elapsed_at(now))
+    }
+
     pub(crate) fn reset_status_timer(&mut self, elapsed: Duration) {
         self.status_timer.reset(elapsed);
     }

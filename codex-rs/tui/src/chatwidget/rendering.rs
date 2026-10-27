@@ -5,7 +5,7 @@ use super::transcript::ActiveCellLayoutCache;
 use super::transcript::ActiveCellLayoutCacheKey;
 use super::*;
 use crate::keymap::KeymapContext;
-use crate::motion::ACTIVITY_BLINK_INTERVAL;
+use crate::motion::activity_frame_delay;
 use crate::motion::blinking_activity_indicator;
 use crate::render::RectExt;
 use crate::terminal_hyperlinks::HyperlinkParagraph;
@@ -185,9 +185,15 @@ impl ChatWidget {
                     && self.bottom_pane.status_widget().is_none()
                     && !self.bottom_pane.has_active_view()
                 {
-                    self.bottom_pane.status_elapsed().map(|elapsed| {
-                        (blinking_activity_indicator(elapsed), &self.frame_requester)
-                    })
+                    self.bottom_pane
+                        .status_display_elapsed_at(Instant::now())
+                        .map(|elapsed| {
+                            (
+                                blinking_activity_indicator(elapsed),
+                                &self.frame_requester,
+                                activity_frame_delay(elapsed),
+                            )
+                        })
                 } else {
                     None
                 },
@@ -379,7 +385,7 @@ struct TranscriptAreaRenderable<'a> {
     top: u16,
     right: u16,
     /// A live stream borrows the working row's pulse without changing stored transcript text.
-    activity: Option<(Span<'static>, &'a FrameRequester)>,
+    activity: Option<(Span<'static>, &'a FrameRequester, Duration)>,
     persistent_layout: Option<PersistentActiveCellLayout<'a>>,
 }
 
@@ -417,7 +423,7 @@ impl Renderable for TranscriptAreaRenderable<'_> {
         Clear.render(area, buf);
         paragraph.scroll(y).render(area, buf);
         if !area.is_empty()
-            && let Some((indicator, frame_requester)) = &self.activity
+            && let Some((indicator, frame_requester, delay)) = &self.activity
         {
             // Stream tails reserve the left margin on every line, including continuations.
             // Keep the pulse on-screen when the message's first line has scrolled out of view.
@@ -434,7 +440,7 @@ impl Renderable for TranscriptAreaRenderable<'_> {
                 cell.set_symbol(indicator.content.as_ref());
                 cell.modifier.remove(Modifier::DIM);
                 cell.set_style(indicator.style);
-                frame_requester.schedule_frame_in(ACTIVITY_BLINK_INTERVAL);
+                frame_requester.schedule_frame_in(*delay);
             }
         }
     }

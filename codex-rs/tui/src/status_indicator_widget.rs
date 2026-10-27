@@ -26,10 +26,11 @@ use crate::key_hint;
 use crate::key_hint::ShortcutHint;
 use crate::line_truncation::line_width;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use crate::motion::ACTIVITY_BLINK_INTERVAL;
 use crate::motion::MotionMode;
 use crate::motion::ReducedMotionIndicator;
+use crate::motion::activity_frame_delay;
 use crate::motion::activity_indicator;
+use crate::motion::blinking_activity_indicator;
 use crate::render::renderable::Renderable;
 use crate::text_formatting::capitalize_first;
 use crate::tui::FrameRequester;
@@ -228,12 +229,12 @@ impl StatusIndicator<'_> {
     // Share width decisions between height measurement and rendering, including
     // wide Unicode characters, remapped interrupt hints, and elapsed-time text.
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.lines_at(width, Instant::now())
+    }
+
+    fn lines_at(&self, width: u16, now: Instant) -> Vec<Line<'static>> {
         let row = self.row;
-        let now = Instant::now();
-        let elapsed_duration = self.timer.display_started_at.map_or_else(
-            || self.timer.elapsed_at(now),
-            |started_at| now.saturating_duration_since(started_at),
-        );
+        let elapsed_duration = self.timer.display_elapsed_at(now);
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
         let progress =
             MotionMode::from_animations_enabled(row.animations_enabled && row.effects.progress);
@@ -241,15 +242,17 @@ impl StatusIndicator<'_> {
             MotionMode::from_animations_enabled(row.animations_enabled && row.effects.shimmer);
 
         let mut spans = Vec::with_capacity(5);
-        if let Some(indicator) = activity_indicator(
-            Some(self.timer.last_resume_at),
-            progress,
-            if self.timer.is_paused || !row.effects.progress {
-                ReducedMotionIndicator::Hidden
+        let indicator =
+            if progress == MotionMode::Reduced && !self.timer.is_paused && row.effects.progress {
+                Some(blinking_activity_indicator(elapsed_duration))
             } else {
-                ReducedMotionIndicator::BlinkingBullet
-            },
-        ) {
+                activity_indicator(
+                    Some(self.timer.last_resume_at),
+                    progress,
+                    ReducedMotionIndicator::Hidden,
+                )
+            };
+        if let Some(indicator) = indicator {
             spans.push(indicator);
             spans.push(" ".into());
         }
@@ -311,7 +314,8 @@ impl Renderable for StatusIndicator<'_> {
         if area.is_empty() {
             return;
         }
-        if self.row.animations_enabled
+        let now = Instant::now();
+        if (self.row.animations_enabled && (self.row.effects.progress || self.row.effects.shimmer))
             || !self.timer.is_paused
             || self.timer.display_started_at.is_some()
         {
@@ -320,11 +324,11 @@ impl Renderable for StatusIndicator<'_> {
             {
                 Duration::from_millis(/*millis*/ 32)
             } else {
-                ACTIVITY_BLINK_INTERVAL
+                activity_frame_delay(self.timer.display_elapsed_at(now))
             };
             self.row.frame_requester.schedule_frame_in(interval);
         }
-        Paragraph::new(Text::from(self.lines(area.width))).render(area, buf);
+        Paragraph::new(Text::from(self.lines_at(area.width, now))).render(area, buf);
     }
 }
 
@@ -478,15 +482,12 @@ mod tests {
         let mut timer = StatusTimer::default();
         let mut terminal =
             Terminal::new(TestBackend::new(/*width*/ 80, /*height*/ 1)).expect("terminal");
-        let before = Instant::now();
         terminal
             .draw(|f| w.with_timer(&timer).render(f.area(), f.buffer_mut()))
             .expect("draw");
         let deadline = draw_rx.try_recv().expect("activity refresh");
-        assert!(
-            (before + ACTIVITY_BLINK_INTERVAL..=Instant::now() + ACTIVITY_BLINK_INTERVAL)
-                .contains(&deadline)
-        );
+        assert!(deadline >= timer.last_resume_at + Duration::from_secs(1));
+        assert!(deadline < timer.last_resume_at + Duration::from_millis(1050));
         insta::assert_snapshot!(terminal.backend());
 
         timer.pause_at(Instant::now());
@@ -497,6 +498,42 @@ mod tests {
             draw_rx.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         );
+    }
+
+    #[test]
+    fn reduced_motion_bullet_and_clock_share_displayed_seconds() {
+        let (tx, _rx) = unbounded_channel();
+        let w = StatusIndicatorWidget::new(
+            AppEventSender::new(tx),
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ false,
+            Default::default(),
+        );
+        let baseline = Instant::now();
+        let mut timer = StatusTimer {
+            elapsed_running: Duration::from_millis(1250),
+            last_resume_at: baseline,
+            ..StatusTimer::default()
+        };
+        for display_started_at in [None, Some(baseline - Duration::from_millis(3250))] {
+            timer.display_started_at = display_started_at;
+            let status = StatusIndicator {
+                row: &w,
+                timer: &timer,
+            };
+            let first = status.lines_at(80, baseline);
+            for millis in [100, 500, 749] {
+                assert_eq!(
+                    status.lines_at(80, baseline + Duration::from_millis(millis)),
+                    first
+                );
+            }
+            let next = status.lines_at(80, baseline + Duration::from_millis(750));
+            assert_eq!(first[0].spans[0], "◦".dim());
+            assert_eq!(next[0].spans[0], "•".into());
+            let seconds = if display_started_at.is_some() { 4 } else { 2 };
+            assert!(next[0].to_string().contains(&format!("({seconds}s •")));
+        }
     }
 
     #[test]

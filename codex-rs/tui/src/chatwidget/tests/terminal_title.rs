@@ -100,11 +100,16 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     chat.frame_requester = frame_requester;
     chat.bottom_pane.set_task_running(/*running*/ true);
     let before_refresh = Instant::now();
+    let expected = before_refresh
+        + crate::motion::activity_frame_delay(
+            chat.bottom_pane
+                .status_display_elapsed_at(before_refresh)
+                .unwrap(),
+        );
     chat.refresh_terminal_title();
-    let spinner_interval = std::time::Duration::from_millis(/*millis*/ 100);
-    assert!(
-        (before_refresh + spinner_interval..=Instant::now() + spinner_interval)
-            .contains(&chat.terminal_title_next_refresh.expect("spinner deadline"))
+    assert_eq!(
+        chat.terminal_title_next_refresh.expect("spinner deadline"),
+        expected,
     );
     assert_eq!(
         draw_rx.try_recv(),
@@ -131,13 +136,10 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     let before_refresh = Instant::now();
     chat.terminal_title_animation_origin = before_refresh;
     chat.pre_draw_tick();
-    let blink_interval = std::time::Duration::from_secs(/*secs*/ 1);
-    assert!(
-        (before_refresh + blink_interval..=Instant::now() + blink_interval).contains(
-            &chat
-                .terminal_title_next_refresh
-                .expect("action-required deadline")
-        )
+    assert_eq!(
+        chat.terminal_title_next_refresh
+            .expect("action-required deadline"),
+        before_refresh + Duration::from_secs(1),
     );
 
     assert_eq!(
@@ -256,14 +258,30 @@ async fn terminal_title_activity_indicators_animate_with_reduced_motion() {
     chat.bottom_pane.set_task_running(/*running*/ true);
     let now = Instant::now();
     chat.terminal_title_animation_origin = now;
+    chat.bottom_pane.set_status_timer_origin(Some(now));
     chat.refresh_terminal_title();
 
-    let frames = [now, now + Duration::from_millis(/*millis*/ 100)].map(|now| {
+    let frames = [now, now + Duration::from_secs(1)].map(|now| {
         chat.terminal_title_spinner_text_at(now)
             .expect("running spinner")
     });
     assert!(chat.should_animate_terminal_title_spinner());
-    assert!(chat.terminal_title_next_refresh.is_some());
+    assert_eq!(
+        chat.terminal_title_next_refresh,
+        Some(now + Duration::from_secs(1))
+    );
+    for millis in [100, 600, 999] {
+        assert_eq!(
+            chat.terminal_title_spinner_text_at(now + Duration::from_millis(millis)),
+            Some(frames[0].clone())
+        );
+    }
+    chat.local_settings.tui.animations = true;
+    assert_eq!(
+        chat.terminal_title_spinner_text_at(now + Duration::from_millis(100)),
+        Some(frames[1].clone())
+    );
+    chat.local_settings.tui.animations = false;
 
     let request = ExecApprovalRequestEvent {
         kind: Default::default(),

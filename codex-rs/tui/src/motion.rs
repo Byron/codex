@@ -15,7 +15,11 @@ mod shimmer;
 
 use shimmer::shimmer_spans;
 
-pub(crate) const ACTIVITY_BLINK_INTERVAL: Duration = Duration::from_millis(/*millis*/ 600);
+pub(crate) const ACTIVITY_BLINK_INTERVAL: Duration = Duration::from_secs(1);
+
+pub(crate) fn activity_frame_delay(elapsed: Duration) -> Duration {
+    ACTIVITY_BLINK_INTERVAL - Duration::from_nanos(u64::from(elapsed.subsec_nanos()))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MotionMode {
@@ -37,7 +41,6 @@ impl MotionMode {
 pub(crate) enum ReducedMotionIndicator {
     Hidden,
     StaticBullet,
-    BlinkingBullet,
 }
 
 /// Show the current loading glyph immediately and schedule the next frame.
@@ -82,12 +85,6 @@ pub(crate) fn activity_indicator(
         MotionMode::Reduced => match reduced_motion_indicator {
             ReducedMotionIndicator::Hidden => None,
             ReducedMotionIndicator::StaticBullet => Some("•".dim()),
-            ReducedMotionIndicator::BlinkingBullet => Some(blinking_activity_indicator(
-                start_time
-                    .as_ref()
-                    .map(Instant::elapsed)
-                    .unwrap_or_default(),
-            )),
         },
     }
 }
@@ -153,24 +150,27 @@ mod tests {
             ),
             Some("•".dim())
         );
-        assert_eq!(
-            activity_indicator(
-                /*start_time*/ None,
-                MotionMode::Reduced,
-                ReducedMotionIndicator::BlinkingBullet,
-            ),
-            Some("•".into())
-        );
     }
 
     #[test]
     fn activity_blink_changes_only_at_slow_frame_boundaries() {
-        let frames = [0, 599, 600, 1199, 1200]
+        let frames = [0, 999, 1000, 1999, 2000]
             .map(|millis| blinking_activity_indicator(Duration::from_millis(millis)));
         assert_eq!(
             frames,
             ["•".into(), "•".into(), "◦".dim(), "◦".dim(), "•".into()]
         );
+    }
+
+    #[test]
+    fn activity_refresh_targets_the_next_elapsed_second() {
+        for millis in [0, 250, 999, 1000, 1750] {
+            let elapsed = Duration::from_millis(millis);
+            assert_eq!(
+                elapsed + activity_frame_delay(elapsed),
+                Duration::from_secs(elapsed.as_secs() + 1)
+            );
+        }
     }
 
     #[test]
