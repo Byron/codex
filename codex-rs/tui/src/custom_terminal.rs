@@ -34,7 +34,9 @@ use crossterm::style::SetAttribute;
 use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetColors;
 use crossterm::style::SetForegroundColor;
+use crossterm::terminal::BeginSynchronizedUpdate;
 use crossterm::terminal::Clear;
+use crossterm::terminal::EndSynchronizedUpdate;
 use derive_more::IsVariant;
 use ratatui::backend::Backend;
 use ratatui::backend::ClearType;
@@ -149,6 +151,8 @@ where
     pub hidden_cursor: bool,
     /// Last cursor style sent successfully, so ordinary redraws do not repaint its repair anchor.
     last_cursor_style: Option<SetCursorStyle>,
+    /// Last requested cursor state, including styles omitted when no repair anchor exists.
+    last_frame_cursor: Option<(Option<Position>, SetCursorStyle)>,
     /// Area of the viewport
     pub viewport_area: Rect,
     /// Last known size of the terminal. Used to detect if the internal buffers have to be resized.
@@ -231,6 +235,7 @@ where
             current: 0,
             hidden_cursor: false,
             last_cursor_style: None,
+            last_frame_cursor: None,
             viewport_area: Rect::new(
                 /*x*/ 0,
                 cursor_pos.y,
@@ -307,6 +312,9 @@ where
     }
 
     fn flush_updates(&mut self, updates: Vec<DrawCommand>) -> io::Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
         let last_put_command = updates.iter().rfind(|command| command.is_put());
         if let Some(&DrawCommand::Put { x, y, .. }) = last_put_command {
             self.last_known_cursor_pos = Position { x, y };
@@ -366,6 +374,30 @@ where
     where
         F: FnOnce(&mut Frame),
     {
+        self.draw_with_size_and_sync(screen_size, render_callback, false)
+    }
+
+    /// Synchronize only frames that write text, graphics, or cursor changes.
+    pub(crate) fn draw_synchronized_with_size<F>(
+        &mut self,
+        screen_size: Size,
+        render_callback: F,
+    ) -> io::Result<()>
+    where
+        F: FnOnce(&mut Frame),
+    {
+        self.draw_with_size_and_sync(screen_size, render_callback, true)
+    }
+
+    fn draw_with_size_and_sync<F>(
+        &mut self,
+        screen_size: Size,
+        render_callback: F,
+        synchronize: bool,
+    ) -> io::Result<()>
+    where
+        F: FnOnce(&mut Frame),
+    {
         if screen_size != self.last_known_screen_size {
             self.resize(screen_size)?;
         }
@@ -383,60 +415,96 @@ where
             images.truncate(254); // The last two pane IDs belong to the pet and picker.
         }
         let changed = self.transcript_images.placements != images;
-        if changed && self.tmux_kitty_image_base.is_some() {
-            self.reset_transcript_images()?;
-        } else if changed
-            && self
-                .transcript_images
-                .remove_placements(&mut self.backend)?
-        {
-            // Sixel has no separate placement deletion; repaint the old pixels with text.
-            self.invalidate_viewport();
-        }
-
-        // Not every terminal or multiplexer hides intermediate cursor moves inside a
-        // synchronized update, especially when the frame spans multiple writes.
-        let updates = diff_buffers(self.previous_buffer(), self.current_buffer());
-        // A text clear, focus highlight, or full repaint may erase an otherwise stable image.
-        let repaint_images = changed
-            || updates.iter().any(|update| {
-                images.iter().any(|placement| match update {
-                    DrawCommand::Put { x, y, .. } => placement.area.contains((*x, *y).into()),
-                    DrawCommand::ClearToEnd { x, y, .. } => {
-                        *y >= placement.area.y
-                            && *y < placement.area.bottom()
-                            && *x < placement.area.right()
-                    }
-                })
-            });
-        if !updates.is_empty() && !self.hidden_cursor {
-            self.hide_cursor()?;
-        }
-        self.flush_updates(updates)?;
-        if repaint_images {
-            if let Some(base) = self.tmux_kitty_image_base {
-                self.transcript_images
-                    .draw_tmux(&mut self.backend, images, base)?;
-            } else {
-                self.transcript_images.draw(&mut self.backend, images)?;
-            }
-        }
-
-        match cursor_position {
-            None if !self.hidden_cursor => self.hide_cursor()?,
-            None => {}
+        let mut updates = diff_buffers(self.previous_buffer(), self.current_buffer());
+        let cursor_state_invalid = self.last_frame_cursor.is_none();
+        let cursor_unchanged = match cursor_position {
+            None => self.hidden_cursor,
             Some(position) => {
-                self.set_cursor_style_with_repair(cursor_style)?;
-                self.set_cursor_position(position)?;
-                self.show_cursor()?;
+                self.last_frame_cursor == Some((cursor_position, cursor_style))
+                    && !self.hidden_cursor
+                    && position == self.last_known_cursor_pos
             }
+        };
+        if updates.is_empty() && !changed && cursor_unchanged {
+            self.last_frame_cursor = Some((cursor_position, cursor_style));
+            self.swap_buffers();
+            return Backend::flush(&mut self.backend);
         }
 
-        self.swap_buffers();
+        if synchronize {
+            queue!(self.backend, BeginSynchronizedUpdate)?;
+        }
+        let result = (|| {
+            if changed && self.tmux_kitty_image_base.is_some() {
+                self.reset_transcript_images()?;
+                updates = diff_buffers(self.previous_buffer(), self.current_buffer());
+            } else if changed
+                && self
+                    .transcript_images
+                    .remove_placements(&mut self.backend)?
+            {
+                // Sixel has no separate placement deletion; repaint the old pixels with text.
+                self.invalidate_viewport();
+                updates = diff_buffers(self.previous_buffer(), self.current_buffer());
+            }
 
-        Backend::flush(&mut self.backend)?;
+            // A text clear, focus highlight, or full repaint may erase an otherwise stable image.
+            let repaint_images = changed
+                || updates.iter().any(|update| {
+                    images.iter().any(|placement| match update {
+                        DrawCommand::Put { x, y, .. } => placement.area.contains((*x, *y).into()),
+                        DrawCommand::ClearToEnd { x, y, .. } => {
+                            *y >= placement.area.y
+                                && *y < placement.area.bottom()
+                                && *x < placement.area.right()
+                        }
+                    })
+                });
+            if !updates.is_empty() && !self.hidden_cursor {
+                // Some terminals expose intermediate cursor moves even in synchronized updates.
+                self.hide_cursor()?;
+            }
+            let cursor_moved_by_text = !updates.is_empty();
+            self.flush_updates(updates)?;
+            if repaint_images {
+                if let Some(base) = self.tmux_kitty_image_base {
+                    self.transcript_images
+                        .draw_tmux(&mut self.backend, images, base)?;
+                } else {
+                    self.transcript_images.draw(&mut self.backend, images)?;
+                }
+            }
 
-        Ok(())
+            match cursor_position {
+                None if !self.hidden_cursor => self.hide_cursor()?,
+                None => {}
+                Some(position) => {
+                    let style_changed = self.last_cursor_style != Some(cursor_style);
+                    self.set_cursor_style_with_repair(cursor_style)?;
+                    if cursor_moved_by_text
+                        || style_changed
+                        || position != self.last_known_cursor_pos
+                    {
+                        self.set_cursor_position(position)?;
+                    }
+                    if self.hidden_cursor || cursor_state_invalid {
+                        self.show_cursor()?;
+                    }
+                }
+            }
+
+            self.last_frame_cursor = Some((cursor_position, cursor_style));
+            self.swap_buffers();
+            Ok(())
+        })();
+        // End synchronization and flush even if writing the frame failed.
+        let end_result = if synchronize {
+            queue!(self.backend, EndSynchronizedUpdate)
+        } else {
+            Ok(())
+        };
+        let flush_result = Backend::flush(&mut self.backend);
+        result.and(end_result).and(flush_result)
     }
 
     /// Hides the cursor.
@@ -457,6 +525,7 @@ where
     pub fn set_cursor_style(&mut self, style: SetCursorStyle) -> io::Result<()> {
         queue!(self.backend, style)?;
         self.last_cursor_style = Some(style);
+        self.last_frame_cursor = None;
         Ok(())
     }
 
@@ -891,6 +960,7 @@ mod tests {
         size: Size,
         cursor: Position,
         size_call_count: std::cell::Cell<usize>,
+        fail_after_bytes: Option<usize>,
     }
 
     impl CaptureBackend {
@@ -900,6 +970,7 @@ mod tests {
                 size: Size { width, height },
                 cursor: Position { x: 0, y: 0 },
                 size_call_count: std::cell::Cell::new(/*value*/ 0),
+                fail_after_bytes: None,
             }
         }
 
@@ -910,6 +981,13 @@ mod tests {
 
     impl Write for CaptureBackend {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self
+                .fail_after_bytes
+                .is_some_and(|limit| self.output.len() >= limit)
+            {
+                self.fail_after_bytes = None;
+                return Err(io::Error::other("injected terminal write failure"));
+            }
             self.output.extend_from_slice(buf);
             Ok(buf.len())
         }

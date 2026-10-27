@@ -1441,6 +1441,16 @@ impl Tui {
         self.with_shortcut_hud(hud, |tui| tui.draw(height, draw_fn))
     }
 
+    fn frame_needs_terminal_setup(&self, height: u16, screen_size: Size) -> bool {
+        self.clear_thread_switch_on_draw
+            || (self.owned_screen && !self.is_alt_screen_active())
+            || !self.pending_history_lines.is_empty()
+            || screen_size != self.terminal.last_known_screen_size
+            || self.terminal.viewport_area.width != screen_size.width
+            || self.terminal.viewport_area.height != height.min(screen_size.height)
+            || self.terminal.viewport_area.bottom() > screen_size.height
+    }
+
     pub fn draw(
         &mut self,
         height: u16,
@@ -1454,11 +1464,23 @@ impl Tui {
             .suspend_context
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
+        #[cfg(unix)]
+        let resuming = prepared_resume.is_some();
+        #[cfg(not(unix))]
+        let resuming = false;
+        ensure_virtual_terminal_processing()?;
+        if !resuming && !self.frame_needs_terminal_setup(height, screen_size) {
+            return Ok(self
+                .terminal
+                .draw_synchronized_with_size(screen_size, |frame| {
+                    draw_fn(frame);
+                    self.shortcut_hud_area = self.shortcut_hud.as_ref().map(|hud| hud.paint(frame));
+                })?);
+        }
+
         // Precompute any viewport updates that need a cursor-position query before entering
         // the synchronized update, to avoid racing with the event reader.
         let mut pending_viewport_area = self.pending_viewport_area(screen_size)?;
-
-        ensure_virtual_terminal_processing()?;
 
         stdout().sync_update(|_| {
             #[cfg(unix)]
@@ -1613,7 +1635,19 @@ impl Tui {
             .suspend_context
             .prepare_resume_action(&mut self.alt_saved_viewport);
 
+        #[cfg(unix)]
+        let resuming = prepared_resume.is_some();
+        #[cfg(not(unix))]
+        let resuming = false;
         ensure_virtual_terminal_processing()?;
+        if !resuming && !self.frame_needs_terminal_setup(height, screen_size) {
+            return Ok(self
+                .terminal
+                .draw_synchronized_with_size(screen_size, |frame| {
+                    draw_fn(frame);
+                    self.shortcut_hud_area = hud.as_ref().map(|hud| hud.paint(frame));
+                })?);
+        }
 
         stdout().sync_update(|_| {
             #[cfg(unix)]

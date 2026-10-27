@@ -1,4 +1,4 @@
-//! Exercise session ownership in an isolated process so global terminal modes cannot race tests.
+//! Exercise terminal updates and session ownership in isolation so global modes cannot race tests.
 
 #![cfg(unix)]
 
@@ -11,9 +11,81 @@ use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use ratatui::layout::Size;
+use ratatui::style::Style;
 use std::process::Command;
 
 const CHILD_ENV: &str = "CODEX_TUI_OWNED_SCREEN_CHILD";
+
+#[test]
+fn unchanged_inline_frames_are_silent_but_history_insertion_is_synchronized() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tui::owned_screen_tests::unchanged_frames_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(CHILD_ENV, "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let output = String::from_utf8(output.stdout).unwrap();
+    let unchanged = output.split("<unchanged>").skip(1).collect::<Vec<_>>();
+    assert_eq!(unchanged.len(), 2);
+    for frame in unchanged {
+        assert_eq!(frame.split_once("</unchanged>").unwrap().0, "");
+    }
+    let history = output.split("<history>").skip(1).collect::<Vec<_>>();
+    assert_eq!(history.len(), 2);
+    for frame in history {
+        let frame = frame.split_once("</history>").unwrap().0;
+        assert!(frame.starts_with("\x1b[?2026h"));
+        assert!(frame.ends_with("\x1b[?2026l"));
+        assert!(frame.contains("Inserted history"));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "spawned by the unchanged inline-frame test"]
+async fn unchanged_frames_child() {
+    use std::io::Write;
+    if std::env::var_os(CHILD_ENV).is_none() {
+        return;
+    }
+    let mut tui = super::test_support::make_test_tui().unwrap();
+    tui.terminal.set_viewport_area(Rect::new(0, 4, 80, 1));
+    let size = Size::new(80, 24);
+    let mut renders = 0;
+    for reflow in [false, true] {
+        for index in 0..12 {
+            if index == 1 {
+                std::io::stdout().write_all(b"<unchanged>").unwrap();
+            }
+            if index == 11 {
+                std::io::stdout()
+                    .write_all(b"</unchanged><history>")
+                    .unwrap();
+                tui.insert_history_lines(vec!["Inserted history".into()]);
+            }
+            let draw = |frame: &mut crate::custom_terminal::Frame<'_>| {
+                renders += 1;
+                let area = frame.area();
+                frame
+                    .buffer_mut()
+                    .set_string(area.x, area.y, "Working", Style::default());
+                frame.set_cursor_position((area.x + 2, area.y));
+            };
+            if reflow {
+                tui.draw_with_resize_reflow(1, size, /*hud*/ None, draw)
+                    .unwrap();
+            } else {
+                tui.draw(1, draw).unwrap();
+            }
+        }
+        std::io::stdout().write_all(b"</history>").unwrap();
+    }
+    assert_eq!(renders, 24);
+}
 
 #[test]
 fn owned_screen_preserves_inline_viewport_across_overlay_handoff_and_resume() {

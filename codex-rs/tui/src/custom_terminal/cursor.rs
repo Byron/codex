@@ -24,6 +24,7 @@ where
 {
     pub(crate) fn invalidate_cursor_state(&mut self) {
         self.last_cursor_style = None;
+        self.last_frame_cursor = None;
         // An external program or screen switch can show a cursor that we believed was hidden.
         self.hidden_cursor = false;
     }

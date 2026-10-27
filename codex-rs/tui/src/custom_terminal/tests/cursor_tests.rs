@@ -3,6 +3,78 @@ use crate::terminal_palette::rgb_color;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn unchanged_synchronized_frames_emit_no_terminal_bytes() {
+    for has_text in [false, true] {
+        for show_cursor in [false, true] {
+            let mut terminal = Terminal::with_options(CaptureBackend::new(12, 2)).unwrap();
+            terminal.set_viewport_area(Rect::new(0, 0, 12, 2));
+            let mut renders = 0;
+            for index in 0..10 {
+                terminal.backend_mut().output.clear();
+                terminal
+                    .draw_synchronized_with_size(Size::new(12, 2), |frame| {
+                        renders += 1;
+                        if has_text {
+                            frame
+                                .buffer_mut()
+                                .set_string(0, 0, "Working", Style::default());
+                        } else {
+                            for cell in &mut frame.buffer_mut().content {
+                                cell.diff_option = CellDiffOption::Skip;
+                            }
+                        }
+                        if show_cursor {
+                            frame.set_cursor_position((4, 1));
+                        }
+                    })
+                    .unwrap();
+                if index > 0 {
+                    assert_eq!(terminal.backend().output(), "");
+                }
+            }
+            assert_eq!(renders, 10);
+        }
+    }
+}
+
+#[test]
+fn cursor_only_changes_still_use_synchronized_updates() {
+    let mut terminal = Terminal::with_options(CaptureBackend::new(12, 2)).unwrap();
+    terminal.set_viewport_area(Rect::new(0, 0, 12, 2));
+    for position in [(4, 1), (5, 1)] {
+        terminal.backend_mut().output.clear();
+        terminal
+            .draw_synchronized_with_size(Size::new(12, 2), |frame| {
+                frame
+                    .buffer_mut()
+                    .set_string(0, 0, "Working", Style::default());
+                frame.set_cursor_position(position);
+            })
+            .unwrap();
+        let output = terminal.backend().output();
+        assert!(output.starts_with("\x1b[?2026h"));
+        assert!(output.ends_with("\x1b[?2026l"));
+        let mut parser = vt100::Parser::new(2, 12, 0);
+        parser.process(&terminal.backend().output);
+        assert_eq!(parser.screen().cursor_position(), (position.1, position.0));
+    }
+}
+
+#[test]
+fn failed_frame_still_ends_synchronized_update() {
+    let mut terminal = Terminal::with_options(CaptureBackend::new(12, 2)).unwrap();
+    terminal.set_viewport_area(Rect::new(0, 0, 12, 2));
+    terminal.backend_mut().fail_after_bytes = Some(8);
+    let result = terminal.draw_synchronized_with_size(Size::new(12, 2), |frame| {
+        frame
+            .buffer_mut()
+            .set_string(0, 0, "Working", Style::default());
+    });
+    assert!(result.is_err());
+    assert_eq!(terminal.backend().output(), "\x1b[?2026h\x1b[?2026l");
+}
+
+#[test]
 fn terminal_draw_keeps_intermediate_cursor_positions_hidden() {
     let mut terminal =
         Terminal::with_options(CaptureBackend::new(/*width*/ 12, /*height*/ 2)).expect("terminal");
@@ -217,16 +289,10 @@ fn terminal_draw_omits_cursor_style_without_an_owned_glyph() {
                 frame.set_cursor_position((1, 0));
             })
             .expect("draw");
-        assert_eq!(
-            terminal.backend().output(),
-            "\x1b[39m\x1b[49m\x1b[0m\x1b[1;2H\x1b[?25h"
-        );
+        assert_eq!(terminal.backend().output(), "\x1b[1;2H\x1b[?25h");
     }
     terminal.set_viewport_area(Rect::default());
     terminal.backend_mut().output.clear();
     terminal.draw(|_| {}).expect("hide cursor");
-    assert_eq!(
-        terminal.backend().output(),
-        "\x1b[39m\x1b[49m\x1b[0m\x1b[?25l"
-    );
+    assert_eq!(terminal.backend().output(), "\x1b[?25l");
 }
