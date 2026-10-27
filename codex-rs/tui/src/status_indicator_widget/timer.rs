@@ -25,6 +25,13 @@ impl Default for StatusTimer {
 }
 
 impl StatusTimer {
+    pub(crate) fn display_elapsed_at(&self, now: Instant) -> Duration {
+        self.display_started_at.map_or_else(
+            || self.elapsed_at(now),
+            |started_at| now.saturating_duration_since(started_at),
+        )
+    }
+
     pub(crate) fn reset(&mut self, elapsed: Duration) {
         self.elapsed_running = elapsed;
         self.last_resume_at = Instant::now();

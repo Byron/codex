@@ -9,7 +9,7 @@ full, 0ns
   Second line
   Last line
 
-full, 600ms
+full, 1s
 
 ◦ First line
   Second line
@@ -19,7 +19,7 @@ continuation, 0ns
 
 • Last line
 
-continuation, 600ms
+continuation, 1s
 
 ◦ Last line
 
@@ -27,6 +27,6 @@ wrapped, 0ns
 •
 yz
 
-wrapped, 600ms
+wrapped, 1s
 ◦
 yz
