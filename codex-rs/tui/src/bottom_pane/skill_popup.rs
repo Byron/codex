@@ -384,6 +384,40 @@ mod tests {
     }
 
     #[test]
+    fn location_tags_distinguish_long_duplicate_skill_names() {
+        let mut mentions = ["[Skill: .codex]", "[Skill: gitoxide]"]
+            .into_iter()
+            .map(|tag| MentionItem {
+                description: Some("Secondary details".to_string()),
+                ..ranked_mention_item(
+                    "Shared skill with a very long name",
+                    &[],
+                    tag,
+                    /*sort_rank*/ 1,
+                )
+            })
+            .collect::<Vec<_>>();
+        mentions.push(named_mention_item("Shared unique skill", &[]));
+        let mut popup = SkillPopup::new(mentions);
+        popup.set_query("Shared");
+
+        let mut snapshots = Vec::new();
+        for width in [32, 72] {
+            let rendered = render_popup(&popup, width);
+            assert!(rendered.contains("[Skill: .codex]"), "{rendered}");
+            assert!(rendered.contains("[Skill: gitoxide]"), "{rendered}");
+            assert!(rendered.contains("[Skill]"), "{rendered}");
+            assert!(rendered.contains("Shared unique skill"), "{rendered}");
+            assert_eq!(rendered.contains("Secondary details"), width == 72);
+            snapshots.push(format!("width={width}\n{rendered}"));
+        }
+        insta::assert_snapshot!(
+            "skill_popup_duplicate_skill_locations",
+            snapshots.join("\n\n")
+        );
+    }
+
+    #[test]
     fn lowercase_expansion_preserves_match_ranking_and_highlighting() {
         let mut popup = SkillPopup::new(vec![
             named_mention_item("İx", &[]),

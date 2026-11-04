@@ -1,0 +1,14 @@
+---
+source: tui/src/bottom_pane/chat_composer.rs
+expression: terminal.backend()
+---
+"                                        "
+"  tix     [Skill: .codex] Example skill…"
+"› tix     [Skill: gitoxide] Example ski…"
+"  unique  [Skill] Example skill used in…"
+"                                        "
+"  enter insert · esc close              "
+"                                        "
+"› $                                     "
+"                                        "
+"                     100% context left  "
