@@ -1072,10 +1072,12 @@ impl App {
             && self.transcript_view.can_return_to_latest();
         if let TuiEvent::Key(key) = event
             && !self.transcript_view.has_active_interaction()
-            && keymap_action_ids().any(|action| {
+        {
+            let contexts = self.active_keymap_contexts();
+            if keymap_action_ids().any(|action| {
                 action.context != KeymapContext::Pager
                     && !matches!(action.action, "find_transcript" | "focus_activity")
-                    && self.active_keymap_contexts().contains_action(action)
+                    && contexts.contains_action(action)
                     && !(empty_enter_returns_to_latest
                         && action.context == KeymapContext::Composer
                         && action.action == "submit")
@@ -1090,9 +1092,9 @@ impl App {
                         action.action,
                     )
                     .is_some_and(|bindings| bindings.is_pressed(*key))
-            })
-        {
-            return Ok(false);
+            }) {
+                return Ok(false);
+            }
         }
         let was_select_mode = self.transcript_view.is_select_mode();
         let select_exit_key = Self::transcript_select_exit_key(event);
