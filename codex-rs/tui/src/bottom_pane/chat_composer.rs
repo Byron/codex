@@ -37,6 +37,7 @@
 //! owning plugin is listed. `$` lists individual skills and apps, but not plugins.
 //! Disabling `mentions_v2` restores file-only `@` search and adds plugins back to `$`.
 //! Confirmed `$` picker selections inform future ordering within each match tier.
+//! Duplicate skill names in `$` carry location tags, computed when the skill catalog changes.
 //!
 //! # Key Event Routing
 //!
@@ -448,6 +449,7 @@ use crate::clipboard_paste::normalize_pasted_path;
 use crate::clipboard_paste::pasted_image_format;
 use crate::history_cell;
 use crate::skills_helpers::skill_display_name;
+use crate::skills_helpers::skill_location_labels;
 use crate::tui::FrameRequester;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 #[cfg(test)]
@@ -659,6 +661,7 @@ pub(crate) struct ChatComposer {
     /// prepare their argument text without also double-recording the full command invocation.
     pending_slash_command_history: Option<HistoryEntry>,
     skills: Option<Vec<SkillMetadata>>,
+    skill_locations: Vec<Option<String>>,
     plugins: Option<Vec<PluginCapabilitySummary>>,
     task_mentions: Option<Vec<crate::task_mentions::TaskMention>>,
     connectors_snapshot: Option<ConnectorsSnapshot>,
@@ -847,6 +850,7 @@ impl ChatComposer {
             queue_submissions: false,
             pending_slash_command_history: None,
             skills: None,
+            skill_locations: Vec::new(),
             plugins: None,
             task_mentions: None,
             connectors_snapshot: None,
@@ -938,6 +942,7 @@ impl ChatComposer {
     }
 
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
+        self.skill_locations = skill_location_labels(skills.as_deref().unwrap_or_default());
         self.skills = skills;
         self.refresh_mentions_v2_popup_candidates();
         self.sync_popups();
@@ -4322,7 +4327,7 @@ impl ChatComposer {
     fn mention_items(&self) -> Vec<MentionItem> {
         let mut mentions = Vec::new();
         if let Some(skills) = self.skills.as_ref() {
-            for skill in skills {
+            for (skill, location) in skills.iter().zip(&self.skill_locations) {
                 let display_name = skill_display_name(skill);
                 let description = skill_description(skill);
                 let skill_name = skill.name.clone();
@@ -4337,7 +4342,10 @@ impl ChatComposer {
                     insert_text: format!("${skill_name}"),
                     search_terms,
                     path: Some(skill.path.as_str().to_owned()),
-                    category_tag: Some("[Skill]".to_string()),
+                    category_tag: Some(location.as_ref().map_or_else(
+                        || "[Skill]".to_string(),
+                        |location| format!("[Skill: {location}]"),
+                    )),
                     sort_rank: 1,
                 });
             }
@@ -7683,6 +7691,63 @@ mod tests {
             .expect("expected skill mention to be selected");
         assert_eq!(mention.insert_text, "$codex".to_string());
         assert_eq!(mention.path, Some(skill_path.display().to_string()));
+    }
+
+    #[test]
+    fn skill_popup_disambiguates_duplicate_locations() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let (mut composer, _rx) = new_test_composer();
+        let user_path = test_path_buf("/Users/test/.codex/skills/tix/SKILL.md").abs();
+        let repo_path = test_path_buf("/work/gitoxide/.agents/skills/tix/SKILL.md").abs();
+        composer.set_skill_mentions(Some(vec![
+            SkillMetadata {
+                path: user_path.into(),
+                ..test_skill_metadata("tix")
+            },
+            SkillMetadata {
+                path: repo_path.clone().into(),
+                scope: crate::test_support::skill_scope_repo(),
+                ..test_skill_metadata("tix")
+            },
+            test_skill_metadata("unique"),
+        ]));
+        composer.set_text_content("$".to_string(), Vec::new(), Vec::new());
+        composer.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        let width = 40;
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, composer.desired_height(width))).unwrap();
+        terminal
+            .draw(|f| composer.render(f.area(), f.buffer_mut()))
+            .unwrap();
+
+        composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(composer.current_text(), "$tix ");
+        assert_eq!(
+            composer.mention_bindings(),
+            vec![MentionBinding {
+                sigil: '$',
+                mention: "tix".to_string(),
+                path: repo_path.display().to_string(),
+            }],
+        );
+        insta::assert_snapshot!("skill_popup_duplicate_locations", terminal.backend());
+
+        composer.set_text_content("$tix".to_string(), Vec::new(), Vec::new());
+        composer.set_skill_mentions(Some(vec![SkillMetadata {
+            path: repo_path.into(),
+            scope: crate::test_support::skill_scope_repo(),
+            ..test_skill_metadata("tix")
+        }]));
+        let ActivePopup::Skill(popup) = &composer.popups.active else {
+            panic!("expected refreshed skill popup");
+        };
+        assert_eq!(
+            popup.selected_mention().unwrap().category_tag.as_deref(),
+            Some("[Skill]"),
+        );
     }
 
     #[test]
