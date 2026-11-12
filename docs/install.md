@@ -89,8 +89,31 @@ Rebuilding replaces the package directory but leaves the configuration and
 credential in the user profile intact. Close the dev CLI before rebuilding so
 Windows can replace its executables.
 
-On macOS and Linux, `just build-cli-package` continues to write the package to
-`~/.cargo/bin/codex-dev` by default.
+### macOS development package
+
+`just build-cli-package` writes to `~/.cargo/bin/codex-dev` and signs the CLI,
+code-mode host, and executor with the persistent **Rustty Local Signing**
+certificate from your keychain. Each executable has a stable
+`com.openai.codex.local.<binary-name>` signing identifier. Reuse the same
+certificate and private key across builds to retain this identity.
+
+Confirm the certificate is available with `security find-identity -v -p codesigning`.
+To create one, use **Keychain Access > Certificate Assistant > Create a Certificate**,
+select **Self Signed Root** and **Code Signing**, and set its **Code Signing** trust
+to **Always Trust**. You can select a different certificate by name or fingerprint:
+
+```sh
+just build-cli-package "$HOME/.cargo/bin/codex-dev" 'Codex Local Signing'
+codesign --verify --strict "$HOME/.cargo/bin/codex-dev/bin/codex"
+codesign -dr - "$HOME/.cargo/bin/codex-dev/bin/codex"
+```
+
+The designated requirement should include the stable identifier and certificate
+requirement. After switching from ad hoc signing, re-grant any required macOS privacy
+permissions once for the installed executable. These self-signed packages are for
+local development; public releases use the release signing and notarization pipeline.
+
+On Linux, `just build-cli-package` also defaults to `~/.cargo/bin/codex-dev`.
 
 ## Tracing / verbose logging
 

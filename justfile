@@ -173,9 +173,21 @@ build-for-release:
 
 # Build a self-contained local CLI package directory with debug symbols.
 [no-cd]
-[unix]
+[linux]
 build-cli-package package_dir=codex_dev_package_dir:
     {{ python }} "{{ justfile_directory() }}/scripts/build_codex_package.py" --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir "$1" --force
+
+# Build a local macOS package with a persistent signing identity.
+[no-cd]
+[macos]
+build-cli-package package_dir=codex_dev_package_dir signing_identity='Rustty Local Signing':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ python }} "{{ justfile_directory() }}/scripts/build_codex_package.py" --variant codex --target {{ native_package_target }} --cargo-profile dev --package-dir "$1" --force
+    for name in codex codex-code-mode-host codex-exec-server; do
+        codesign --force --sign "$2" --identifier "com.openai.codex.local.$name" "$1/bin/$name"
+        codesign --verify --strict "$1/bin/$name"
+    done
 
 # Build a Windows dev package with a separate command and Codex home.
 [no-cd]
