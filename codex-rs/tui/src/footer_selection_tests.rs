@@ -22,6 +22,27 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> TuiEvent {
 }
 
 #[test]
+fn wheel_input_releases_selection_without_refreshing_geometry() {
+    let area = Rect::new(0, 0, 20, 1);
+    let mut buffer = Buffer::empty(area);
+    "selectable footer".render(area, &mut buffer);
+    let mut selection = RenderedSelection::default();
+    selection.register(area, /*invalidate*/ false);
+    for kind in [MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+        selection.handle_event(&mouse(Down(Left), 0, 0), &buffer);
+        selection.handle_event(&mouse(Drag(Left), 6, 0), &buffer);
+        assert!(selection.view.has_selection_range());
+        let event = mouse(kind, 1, 0);
+        let TuiEvent::Mouse(wheel) = event else {
+            unreachable!();
+        };
+        assert!(!selection.needs_refresh(wheel));
+        assert!(selection.handle_event(&event, &buffer).is_none());
+        assert!(!selection.view.has_active_interaction());
+    }
+}
+
+#[test]
 fn rendered_selection_preserves_unicode_links_and_the_selected_revision() {
     let area = Rect::new(
         /*x*/ 0, /*y*/ 2, /*width*/ 30, /*height*/ 1,

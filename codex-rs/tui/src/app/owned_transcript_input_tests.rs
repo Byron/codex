@@ -20,6 +20,66 @@ use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use pretty_assertions::assert_eq;
 
+#[tokio::test]
+async fn wheel_burst_moves_without_rendering_each_input() -> Result<()> {
+    let (mut app, _events, _operations) = make_test_app_with_channels().await;
+    let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+    app.transcript_cells = vec![Arc::new(PlainHistoryCell::new(
+        (0..2000)
+            .map(|row| format!("row {row:04}").into())
+            .collect(),
+    ))];
+    for size in [Size::new(80, 24), Size::new(300, 100)] {
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        tui.terminal =
+            crate::custom_terminal::Terminal::with_screen_size_and_cursor_position_for_test(
+                ratatui::backend::CrosstermBackend::new(std::io::stdout()),
+                size,
+                ratatui::layout::Position::new(0, 0),
+            );
+        tui.set_owned_screen(/*owned*/ true)?;
+        app.transcript_view.jump_to_latest();
+        app.render_owned_transcript(&mut tui, size)?;
+        let painted =
+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
+        let first_row = |tui: &tui::Tui| {
+            screen(tui)
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("row ")?.parse::<usize>().ok())
+                .expect("visible transcript row")
+        };
+        let before = first_row(&tui);
+        for _ in 0..200 {
+            app.handle_tui_event(
+                &mut tui,
+                &mut server,
+                pointer_event(MouseEventKind::ScrollUp, /*column*/ 1, /*row*/ 1),
+            )
+            .await?;
+        }
+        assert_eq!(
+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal),
+            &painted,
+            "wheel inputs should only schedule the next frame"
+        );
+        assert!(!app.transcript_view.is_following());
+        app.handle_tui_event(&mut tui, &mut server, TuiEvent::Paste("responsive".into()))
+            .await?;
+        assert_eq!(app.chat_widget.composer_text_with_pending(), "responsive");
+        app.chat_widget.apply_external_edit(String::new());
+        app.handle_tui_event(&mut tui, &mut server, TuiEvent::Draw)
+            .await?;
+        assert_ne!(
+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal),
+            &painted
+        );
+        assert_eq!(first_row(&tui), before - 200);
+        tui.set_owned_screen(/*owned*/ false)?;
+    }
+    server.shutdown().await?;
+    Ok(())
+}
+
 async fn select_transcript(
     app: &mut App,
     tui: &mut tui::Tui,

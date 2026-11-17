@@ -90,11 +90,13 @@ impl RenderedSelection {
     }
 
     pub(crate) fn needs_refresh(&self, event: MouseEvent) -> bool {
-        event.kind != MouseEventKind::Moved
-            && self
-                .areas
-                .iter()
-                .any(|area| area.contains(Position::new(event.column, event.row)))
+        !matches!(
+            event.kind,
+            MouseEventKind::Moved | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) && self
+            .areas
+            .iter()
+            .any(|area| area.contains(Position::new(event.column, event.row)))
     }
 
     pub(crate) fn handle_event(

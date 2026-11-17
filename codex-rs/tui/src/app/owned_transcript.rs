@@ -909,7 +909,7 @@ impl App {
         }
         if let TuiEvent::Mouse(mouse) = event {
             let composer_ready = self.chat_widget.prepare_composer_mouse(*mouse);
-            if mouse.kind != crossterm::event::MouseEventKind::Moved {
+            if !is_vertical_wheel && mouse.kind != crossterm::event::MouseEventKind::Moved {
                 self.refresh_owned_transcript(tui)?;
             }
             if self

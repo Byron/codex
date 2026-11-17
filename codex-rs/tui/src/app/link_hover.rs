@@ -101,7 +101,9 @@ impl App {
                 TuiEvent::Mouse(mouse)
                     if matches!(mouse.kind, Drag(Left) | Up(Left) | ScrollUp | ScrollDown) =>
                 {
-                    self.refresh_owned_transcript(tui)?;
+                    if !matches!(mouse.kind, ScrollUp | ScrollDown) {
+                        self.refresh_owned_transcript(tui)?;
+                    }
                     if self
                         .conversation_frame
                         .side_pane()
